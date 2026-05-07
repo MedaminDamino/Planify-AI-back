@@ -4,9 +4,9 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"npm run dev:back\" \"npm run dev --prefix ../../frontend\"",
+      "dev": "concurrently \"npm run dev:back\" \"npm run dev --prefix ../frontend\"",
     "dev:back": "nodemon src/server.js",
-    "start": "node src/server.js"
+    "start": "node src/server.js"   
   },
   "keywords": [],
   "author": "",
