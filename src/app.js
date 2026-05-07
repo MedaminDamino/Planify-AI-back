@@ -2,8 +2,12 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
+import mongoSanitize from 'express-mongo-sanitize';
 
+import { env } from './config/env.js';
 import { errorMiddleware } from './middlewares/error.middleware.js';
+import { apiLimiter, authLimiter } from './middlewares/rateLimit.middleware.js';
+import { xssSanitize } from './middlewares/xss.middleware.js';
 
 // ─── Route Imports ─────────────────────────────────────────────────────────────
 import authRoutes from './routes/auth.routes.js';
@@ -25,12 +29,35 @@ import securityLogRoutes from './routes/securityLog.routes.js';
 
 const app = express();
 
-// ─── Core Middlewares ──────────────────────────────────────────────────────────
-app.use(cors());
+// ─── Security: CORS ────────────────────────────────────────────────────────────
+app.use(
+  cors({
+    origin: env.clientUrl || 'http://localhost:3000',
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  })
+);
+
+// ─── Security: HTTP headers ────────────────────────────────────────────────────
 app.use(helmet());
-app.use(morgan('dev'));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+
+// ─── Logging ───────────────────────────────────────────────────────────────────
+if (process.env.NODE_ENV !== 'test') {
+  app.use(morgan('dev'));
+}
+
+// ─── Body Parsing ──────────────────────────────────────────────────────────────
+// Note: multer handles its own parsing for multipart/form-data routes.
+// These parsers only run on JSON / urlencoded requests.
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+
+// ─── Security: Sanitization ────────────────────────────────────────────────────
+// 1. Strip MongoDB operator injection ($, .) from request body/params/query
+app.use(mongoSanitize({ replaceWith: '_' }));
+// 2. Strip XSS payloads from all string values
+app.use(xssSanitize);
 
 // ─── Static Files ──────────────────────────────────────────────────────────────
 app.use('/uploads', express.static('uploads'));
@@ -39,6 +66,10 @@ app.use('/uploads', express.static('uploads'));
 app.get('/', (req, res) => {
   res.json({ message: 'Planify AI API running' });
 });
+
+// ─── API Rate Limiting ─────────────────────────────────────────────────────────
+app.use('/api', apiLimiter);                // 200 req / 15 min per IP
+app.use('/api/auth', authLimiter);          // 20  req / 15 min per IP (stricter)
 
 // ─── API Routes ────────────────────────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
