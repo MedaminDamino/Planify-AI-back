@@ -2,9 +2,12 @@ import Task from '../models/Task.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
 
-// GET /api/tasks
+// GET /api/tasks  (optional: ?courseId=<id>)
 export const getTasks = asyncHandler(async (req, res) => {
-  const tasks = await Task.find({ userId: req.user._id }).sort({ createdAt: -1 });
+  const filter = { userId: req.user._id };
+  if (req.query.courseId) filter.courseId = req.query.courseId;
+
+  const tasks = await Task.find(filter).sort({ createdAt: -1 });
   res.json({ success: true, count: tasks.length, data: tasks });
 });
 

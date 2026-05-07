@@ -2,9 +2,12 @@ import Exam from '../models/Exam.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
 
-// GET /api/exams
+// GET /api/exams  (optional: ?courseId=<id>)
 export const getExams = asyncHandler(async (req, res) => {
-  const exams = await Exam.find({ userId: req.user._id }).sort({ examDate: 1 });
+  const filter = { userId: req.user._id };
+  if (req.query.courseId) filter.courseId = req.query.courseId;
+
+  const exams = await Exam.find(filter).sort({ examDate: 1 });
   res.json({ success: true, count: exams.length, data: exams });
 });
 

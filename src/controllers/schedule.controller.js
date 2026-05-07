@@ -2,9 +2,23 @@ import ScheduleEvent from '../models/ScheduleEvent.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
 
-// GET /api/schedules
+// GET /api/schedules  (optional: ?courseId= &start= &end= &type=)
 export const getSchedules = asyncHandler(async (req, res) => {
-  const events = await ScheduleEvent.find({ userId: req.user._id }).sort({ start: 1 });
+  const { courseId, start, end, type } = req.query;
+
+  const filter = { userId: req.user._id };
+
+  if (courseId) filter.courseId = courseId;
+  if (type)     filter.type     = type;
+
+  // Date range: events whose start falls within [start, end]
+  if (start || end) {
+    filter.start = {};
+    if (start) filter.start.$gte = new Date(start);
+    if (end)   filter.start.$lte = new Date(end);
+  }
+
+  const events = await ScheduleEvent.find(filter).sort({ start: 1 });
   res.json({ success: true, count: events.length, data: events });
 });
 
