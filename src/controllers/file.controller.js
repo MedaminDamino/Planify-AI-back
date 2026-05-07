@@ -1,6 +1,7 @@
 import File from '../models/File.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
+import { paginate } from '../utils/paginate.js';
 import path from 'path';
 import fs from 'fs';
 
@@ -13,10 +14,33 @@ const MIME_TO_TYPE = {
   'image/jpeg': 'image',
 };
 
-// GET /api/files
+// GET /api/files  (?search= &courseId= &type= &status= &page= &limit= &sort=)
 export const getFiles = asyncHandler(async (req, res) => {
-  const files = await File.find({ userId: req.user._id }).sort({ uploadedAt: -1 });
-  res.json({ success: true, count: files.length, data: files });
+  const { search, courseId, type, status, page, limit, sort } = req.query;
+
+  const filter = { userId: req.user._id };
+
+  if (search) {
+    filter.$or = [
+      { originalName: { $regex: search, $options: 'i' } },
+      { tags:         { $regex: search, $options: 'i' } },
+    ];
+  }
+  if (courseId) filter.courseId = courseId;
+  if (type)     filter.type     = type;
+  if (status)   filter.status   = status;
+
+  const sortMap = {
+    newest:  { uploadedAt: -1 },
+    oldest:  { uploadedAt:  1 },
+    name:    { originalName: 1 },
+    largest: { size: -1 },
+  };
+  const sortBy = sortMap[sort] || { uploadedAt: -1 };
+
+  const result = await paginate(File, filter, { page, limit, sort: sortBy });
+
+  res.json({ success: true, ...result });
 });
 
 // POST /api/files/upload

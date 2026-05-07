@@ -1,11 +1,34 @@
 import Course from '../models/Course.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
+import { paginate } from '../utils/paginate.js';
 
-// GET /api/courses
+// GET /api/courses  (?search= &status= &priority= &page= &limit= &sort=)
 export const getCourses = asyncHandler(async (req, res) => {
-  const courses = await Course.find({ userId: req.user._id }).sort({ createdAt: -1 });
-  res.json({ success: true, count: courses.length, data: courses });
+  const { search, status, priority, page, limit, sort } = req.query;
+
+  const filter = { userId: req.user._id };
+
+  if (search) {
+    filter.$or = [
+      { title:       { $regex: search, $options: 'i' } },
+      { description: { $regex: search, $options: 'i' } },
+    ];
+  }
+  if (status)   filter.status   = status;
+  if (priority) filter.priority = priority;
+
+  const sortMap = {
+    newest:   { createdAt: -1 },
+    oldest:   { createdAt:  1 },
+    title:    { title:      1 },
+    progress: { progress:  -1 },
+  };
+  const sortBy = sortMap[sort] || { createdAt: -1 };
+
+  const result = await paginate(Course, filter, { page, limit, sort: sortBy });
+
+  res.json({ success: true, ...result });
 });
 
 // POST /api/courses

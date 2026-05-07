@@ -1,14 +1,35 @@
 import Task from '../models/Task.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
+import { paginate } from '../utils/paginate.js';
 
-// GET /api/tasks  (optional: ?courseId=<id>)
+// GET /api/tasks  (?search= &courseId= &status= &priority= &page= &limit= &sort=)
 export const getTasks = asyncHandler(async (req, res) => {
-  const filter = { userId: req.user._id };
-  if (req.query.courseId) filter.courseId = req.query.courseId;
+  const { search, courseId, status, priority, page, limit, sort } = req.query;
 
-  const tasks = await Task.find(filter).sort({ createdAt: -1 });
-  res.json({ success: true, count: tasks.length, data: tasks });
+  const filter = { userId: req.user._id };
+
+  if (search) {
+    filter.$or = [
+      { title:       { $regex: search, $options: 'i' } },
+      { description: { $regex: search, $options: 'i' } },
+    ];
+  }
+  if (courseId) filter.courseId = courseId;
+  if (status)   filter.status   = status;
+  if (priority) filter.priority = priority;
+
+  const sortMap = {
+    newest:   { createdAt: -1 },
+    oldest:   { createdAt:  1 },
+    deadline: { deadline:   1 },
+    priority: { priority:  -1 },
+  };
+  const sortBy = sortMap[sort] || { createdAt: -1 };
+
+  const result = await paginate(Task, filter, { page, limit, sort: sortBy });
+
+  res.json({ success: true, ...result });
 });
 
 // POST /api/tasks

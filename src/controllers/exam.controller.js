@@ -1,14 +1,33 @@
 import Exam from '../models/Exam.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
+import { paginate } from '../utils/paginate.js';
 
-// GET /api/exams  (optional: ?courseId=<id>)
+// GET /api/exams  (?search= &courseId= &status= &priority= &type= &page= &limit= &sort=)
 export const getExams = asyncHandler(async (req, res) => {
-  const filter = { userId: req.user._id };
-  if (req.query.courseId) filter.courseId = req.query.courseId;
+  const { search, courseId, status, priority, type, page, limit, sort } = req.query;
 
-  const exams = await Exam.find(filter).sort({ examDate: 1 });
-  res.json({ success: true, count: exams.length, data: exams });
+  const filter = { userId: req.user._id };
+
+  if (search) {
+    filter.title = { $regex: search, $options: 'i' };
+  }
+  if (courseId) filter.courseId = courseId;
+  if (status)   filter.status   = status;
+  if (priority) filter.priority = priority;
+  if (type)     filter.type     = type;
+
+  const sortMap = {
+    newest:   { createdAt: -1 },
+    oldest:   { createdAt:  1 },
+    date_asc: { examDate:   1 },
+    date_desc:{ examDate:  -1 },
+  };
+  const sortBy = sortMap[sort] || { examDate: 1 };
+
+  const result = await paginate(Exam, filter, { page, limit, sort: sortBy });
+
+  res.json({ success: true, ...result });
 });
 
 // POST /api/exams

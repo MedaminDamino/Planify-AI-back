@@ -1,15 +1,17 @@
 import ScheduleEvent from '../models/ScheduleEvent.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
+import { paginate } from '../utils/paginate.js';
 
-// GET /api/schedules  (optional: ?courseId= &start= &end= &type=)
+// GET /api/schedules  (?courseId= &start= &end= &type= &status= &page= &limit=)
 export const getSchedules = asyncHandler(async (req, res) => {
-  const { courseId, start, end, type } = req.query;
+  const { courseId, start, end, type, status, page, limit } = req.query;
 
   const filter = { userId: req.user._id };
 
   if (courseId) filter.courseId = courseId;
   if (type)     filter.type     = type;
+  if (status)   filter.status   = status;
 
   // Date range: events whose start falls within [start, end]
   if (start || end) {
@@ -18,8 +20,9 @@ export const getSchedules = asyncHandler(async (req, res) => {
     if (end)   filter.start.$lte = new Date(end);
   }
 
-  const events = await ScheduleEvent.find(filter).sort({ start: 1 });
-  res.json({ success: true, count: events.length, data: events });
+  const result = await paginate(ScheduleEvent, filter, { page, limit, sort: { start: 1 } });
+
+  res.json({ success: true, ...result });
 });
 
 // POST /api/schedules
