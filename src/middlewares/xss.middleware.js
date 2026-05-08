@@ -19,6 +19,14 @@ const sanitizeObject = (obj) => {
   return sanitized;
 };
 
+const replaceRequestBag = (target, source) => {
+  for (const key of Object.keys(target)) {
+    delete target[key];
+  }
+
+  Object.assign(target, source);
+};
+
 /**
  * Express middleware that sanitizes req.body, req.params, and req.query
  * against XSS attacks. Safe for JSON bodies and multipart (file uploads)
@@ -27,6 +35,6 @@ const sanitizeObject = (obj) => {
 export const xssSanitize = (req, res, next) => {
   if (req.body   && typeof req.body   === 'object') req.body   = sanitizeObject(req.body);
   if (req.params && typeof req.params === 'object') req.params = sanitizeObject(req.params);
-  if (req.query  && typeof req.query  === 'object') req.query  = sanitizeObject(req.query);
+  if (req.query  && typeof req.query  === 'object') replaceRequestBag(req.query, sanitizeObject(req.query));
   next();
 };

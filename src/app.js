@@ -2,11 +2,11 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
-import mongoSanitize from 'express-mongo-sanitize';
 
 import { env } from './config/env.js';
 import { errorMiddleware } from './middlewares/error.middleware.js';
 import { apiLimiter, authLimiter } from './middlewares/rateLimit.middleware.js';
+import { mongoSanitizeMiddleware } from './middlewares/mongoSanitize.middleware.js';
 import { xssSanitize } from './middlewares/xss.middleware.js';
 
 // ─── Route Imports ─────────────────────────────────────────────────────────────
@@ -55,7 +55,7 @@ app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 // ─── Security: Sanitization ────────────────────────────────────────────────────
 // 1. Strip MongoDB operator injection ($, .) from request body/params/query
-app.use(mongoSanitize({ replaceWith: '_' }));
+app.use(mongoSanitizeMiddleware);
 // 2. Strip XSS payloads from all string values
 app.use(xssSanitize);
 

@@ -1,5 +1,13 @@
 import { ApiError } from '../utils/ApiError.js';
 
+const replaceRequestBag = (target, source) => {
+  for (const key of Object.keys(target)) {
+    delete target[key];
+  }
+
+  Object.assign(target, source);
+};
+
 /**
  * Zod validation middleware factory.
  *
@@ -38,7 +46,7 @@ export const validate = (schema) => (req, res, next) => {
       // Assign validated + coerced values back to request
       if (result.data.body)   req.body   = result.data.body;
       if (result.data.params) req.params = result.data.params;
-      if (result.data.query)  req.query  = result.data.query;
+      if (result.data.query)  replaceRequestBag(req.query, result.data.query);
     } else {
       // Flat schema — validates req.body directly
       const result = schema.safeParse(req.body);
