@@ -30,14 +30,34 @@ import securityLogRoutes from './routes/securityLog.routes.js';
 const app = express();
 
 // ─── Security: CORS ────────────────────────────────────────────────────────────
+// In development, allow any localhost origin (port may shift when concurrently
+// is used). In production, only explicitly listed CLIENT_URL origins are allowed.
+const allowedOrigins = (env.clientUrl || 'http://localhost:3000')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+const isDev = env.nodeEnv !== 'production';
+
 app.use(
   cors({
-    origin: env.clientUrl || 'http://localhost:3000',
+    origin: (origin, callback) => {
+      // Allow requests with no origin (e.g. curl, Postman, server-side)
+      if (!origin) return callback(null, true);
+      // In development: allow any localhost origin regardless of port
+      if (isDev && /^http:\/\/localhost(:\d+)?$/.test(origin)) {
+        return callback(null, true);
+      }
+      // In production: strict list only
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      callback(new Error(`CORS: origin '${origin}' not allowed`));
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
   })
 );
+
 
 // ─── Security: HTTP headers ────────────────────────────────────────────────────
 app.use(helmet());

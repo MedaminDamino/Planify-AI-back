@@ -1,5 +1,5 @@
 import express from 'express';
-import { generateDailyPlan, summarize, generateExercises, chat } from '../controllers/ai.controller.js';
+import { generateDailyPlan, summarize, generateExercises, chat, getAIHistory } from '../controllers/ai.controller.js';
 import { protect } from '../middlewares/auth.middleware.js';
 import { validate } from '../middlewares/validate.middleware.js';
 import {
@@ -13,6 +13,7 @@ const router = express.Router();
 
 router.use(protect);
 
+router.get('/history',                                                  getAIHistory);
 router.post('/daily-plan',          validate(dailyPlanSchema),          generateDailyPlan);
 router.post('/summarize',           validate(summarizeSchema),           summarize);
 router.post('/generate-exercises',  validate(generateExercisesSchema),  generateExercises);
