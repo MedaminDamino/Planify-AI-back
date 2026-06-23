@@ -3,10 +3,22 @@ import TokenTransaction from '../models/TokenTransaction.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
 
+const TOKEN_PACKS = [
+  { id: 'starter', name: 'Starter Pack', tokens: 2000, price: 4.99, popular: false },
+  { id: 'standard', name: 'Standard Pack', tokens: 5000, price: 9.99, popular: true },
+  { id: 'pro', name: 'Pro Pack', tokens: 12000, price: 19.99, popular: false },
+  { id: 'ultimate', name: 'Ultimate Pack', tokens: 25000, price: 34.99, popular: false },
+];
+
 // GET /api/tokens/balance
 export const getBalance = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user._id).select('tokenBalance');
   res.json({ success: true, data: { tokenBalance: user.tokenBalance } });
+});
+
+// GET /api/tokens/packs
+export const getPacks = asyncHandler(async (req, res) => {
+  res.json({ success: true, count: TOKEN_PACKS.length, data: TOKEN_PACKS });
 });
 
 // GET /api/tokens/history

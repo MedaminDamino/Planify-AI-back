@@ -23,10 +23,28 @@ const PLAN_CONFIG = {
   },
 };
 
+const planToDto = (id, config, badge) => ({
+  id,
+  name: id === 'pro' ? 'Pro Plan' : 'Student Plan',
+  priceLabel: `$${config.price.toFixed(2)} / month`,
+  badge: badge || undefined,
+  features: config.features,
+  cta: id === 'pro' ? 'Upgrade to Pro' : 'Choose Student'
+});
+
 // GET /api/subscriptions/me
 export const getSubscription = asyncHandler(async (req, res) => {
   const subscription = await Subscription.findOne({ userId: req.user._id }).sort({ createdAt: -1 });
   res.json({ success: true, data: subscription });
+});
+
+// GET /api/subscriptions/plans
+export const getPlans = asyncHandler(async (req, res) => {
+  const plans = [
+    planToDto('pro', PLAN_CONFIG.pro, 'Most Popular'),
+    planToDto('student', PLAN_CONFIG.student)
+  ];
+  res.json({ success: true, count: plans.length, data: plans });
 });
 
 // POST /api/subscriptions/demo-upgrade

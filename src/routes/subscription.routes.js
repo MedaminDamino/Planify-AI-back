@@ -1,6 +1,7 @@
 import express from 'express';
 import {
   getSubscription,
+  getPlans,
   demoUpgrade,
   cancelDemoSubscription,
 } from '../controllers/subscription.controller.js';
@@ -11,6 +12,7 @@ const router = express.Router();
 router.use(protect);
 
 router.get('/me', getSubscription);
+router.get('/plans', getPlans);
 router.post('/demo-upgrade', demoUpgrade);
 router.post('/cancel-demo', cancelDemoSubscription);
 
