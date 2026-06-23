@@ -13,6 +13,9 @@ export const updateProfile = asyncHandler(async (req, res) => {
     'fullName', 'bio', 'location', 'phone', 'university', 'program',
     'fieldOfStudy', 'academicYear', 'studentId', 'gpa', 'tags',
     'profileCompletion', 'socialLinks',
+    'recoveryEmail', 'recoveryEmailVerified',
+    'recoveryPhone', 'recoveryPhoneVerified',
+    'backupCodesCount',
   ];
 
   const updates = {};

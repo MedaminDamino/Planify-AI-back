@@ -26,6 +26,7 @@ import userPreferenceRoutes from './routes/userPreference.routes.js';
 import subscriptionRoutes from './routes/subscription.routes.js';
 import paymentRoutes from './routes/payment.routes.js';
 import securityLogRoutes from './routes/securityLog.routes.js';
+import securityRoutes from './routes/security.routes.js';
 
 const app = express();
 
@@ -108,6 +109,7 @@ app.use('/api/preferences', userPreferenceRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/security-logs', securityLogRoutes);
+app.use('/api/security', securityRoutes);
 
 // ─── Error Handler (must be last) ─────────────────────────────────────────────
 app.use(errorMiddleware);

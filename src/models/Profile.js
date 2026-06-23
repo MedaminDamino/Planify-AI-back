@@ -22,6 +22,28 @@ const profileSchema = new mongoose.Schema(
     studentId: String,
     gpa: String,
     tags: [String],
+    // Account Recovery fields
+    recoveryEmail: {
+      type: String,
+      trim: true,
+      lowercase: true,
+    },
+    recoveryEmailVerified: {
+      type: Boolean,
+      default: false,
+    },
+    recoveryPhone: {
+      type: String,
+      trim: true,
+    },
+    recoveryPhoneVerified: {
+      type: Boolean,
+      default: false,
+    },
+    backupCodesCount: {
+      type: Number,
+      default: 0,
+    },
     profileCompletion: {
       type: Number,
       default: 0,

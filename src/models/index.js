@@ -13,6 +13,8 @@ import Payment from './Payment.js';
 import Notification from './Notification.js';
 import UserPreference from './UserPreference.js';
 import SecurityLog from './SecurityLog.js';
+import TrustedDevice from './TrustedDevice.js';
+import UserSession from './UserSession.js';
 
 export {
   User,
@@ -30,4 +32,6 @@ export {
   Notification,
   UserPreference,
   SecurityLog,
+  TrustedDevice,
+  UserSession,
 };

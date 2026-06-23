@@ -63,6 +63,11 @@ const userPreferenceSchema = new mongoose.Schema(
         endTime: String,
       },
     },
+    security: {
+      emailAlerts: { type: Boolean, default: true },
+      suspiciousLoginAlerts: { type: Boolean, default: true },
+      deviceManagementEnabled: { type: Boolean, default: true },
+    },
     ai: {
       assistantTone: {
         type: String,
