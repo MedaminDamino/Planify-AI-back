@@ -14,7 +14,7 @@
  */
 export const paginate = async (model, filter, { page, limit, sort, select } = {}) => {
   const _page  = Math.max(1, parseInt(page)  || 1);
-  const _limit = Math.min(100, Math.max(1, parseInt(limit) || 10));
+  const _limit = Math.min(1000, Math.max(1, parseInt(limit) || 10));
   const skip   = (_page - 1) * _limit;
 
   const [total, data] = await Promise.all([

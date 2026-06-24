@@ -7,8 +7,10 @@ const ALLOWED_MIME_TYPES = [
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   'image/png',
   'image/jpeg',
+  'image/jpg',
 ];
 
 const storage = multer.diskStorage({
@@ -26,12 +28,12 @@ const fileFilter = (req, file, cb) => {
   if (ALLOWED_MIME_TYPES.includes(file.mimetype)) {
     cb(null, true);
   } else {
-    cb(new ApiError(400, 'Unsupported file type. Allowed: PDF, DOCX, XLSX, PNG, JPG, JPEG'), false);
+    cb(new ApiError(400, 'Unsupported file type. Allowed: PDF, DOCX, PPTX, XLSX, PNG, JPG, JPEG'), false);
   }
 };
 
 export const upload = multer({
   storage,
   fileFilter,
-  limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB
 });

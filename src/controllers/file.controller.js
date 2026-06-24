@@ -1,4 +1,5 @@
 import File from '../models/File.js';
+import Course from '../models/Course.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
 import { paginate } from '../utils/paginate.js';
@@ -10,8 +11,10 @@ const MIME_TO_TYPE = {
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
   'application/vnd.ms-excel': 'xlsx',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
   'image/png': 'image',
   'image/jpeg': 'image',
+  'image/jpg': 'image',
 };
 
 // GET /api/files  (?search= &courseId= &type= &status= &page= &limit= &sort=)
@@ -23,7 +26,8 @@ export const getFiles = asyncHandler(async (req, res) => {
   if (search) {
     filter.$or = [
       { originalName: { $regex: search, $options: 'i' } },
-      { tags:         { $regex: search, $options: 'i' } },
+      { tags:         { $elemMatch: { $regex: search, $options: 'i' } } },
+      { description:  { $regex: search, $options: 'i' } },
     ];
   }
   if (courseId) filter.courseId = courseId;
@@ -35,6 +39,7 @@ export const getFiles = asyncHandler(async (req, res) => {
     oldest:  { uploadedAt:  1 },
     name:    { originalName: 1 },
     largest: { size: -1 },
+    updated: { updatedAt: -1 },
   };
   const sortBy = sortMap[sort] || { uploadedAt: -1 };
 
@@ -67,6 +72,14 @@ export const uploadFile = asyncHandler(async (req, res) => {
     status: 'uploaded',
   });
 
+  // Sync totalFiles counter on the linked course
+  if (courseId) {
+    await Course.findOneAndUpdate(
+      { _id: courseId, userId: req.user._id },
+      { $inc: { totalFiles: 1 }, updatedAt: new Date() }
+    );
+  }
+
   res.status(201).json({ success: true, data: fileDoc });
 });
 
@@ -85,6 +98,14 @@ export const deleteFile = asyncHandler(async (req, res) => {
   // Remove physical file if it exists
   if (file.path && fs.existsSync(file.path)) {
     fs.unlinkSync(file.path);
+  }
+
+  // Sync totalFiles counter on the linked course
+  if (file.courseId) {
+    await Course.findOneAndUpdate(
+      { _id: file.courseId, userId: req.user._id },
+      { $inc: { totalFiles: -1 }, updatedAt: new Date() }
+    );
   }
 
   res.json({ success: true, message: 'File deleted' });
