@@ -191,6 +191,13 @@ export const summarize = asyncHandler(async (req, res) => {
 
   await deductTokens(req.user._id, cost, 'summary', aiReq._id);
 
+  if (fileId) {
+    await File.findOneAndUpdate(
+      { _id: fileId, userId: req.user._id },
+      { aiSummary: summaryText, keyPoints }
+    );
+  }
+
   res.json({ success: true, data: { summary: dynamicResponse, tokensUsed: cost } });
 });
 
