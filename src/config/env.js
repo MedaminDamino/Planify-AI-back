@@ -9,4 +9,5 @@ export const env = {
   jwtSecret: process.env.JWT_SECRET,
   jwtExpiresIn: process.env.JWT_EXPIRES_IN,
   clientUrl: process.env.CLIENT_URL,
+  firebaseProjectId: process.env.FIREBASE_PROJECT_ID,
 };

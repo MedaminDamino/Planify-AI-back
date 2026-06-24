@@ -30,3 +30,9 @@ export const loginSchema = z.object({
     .string({ required_error: 'Password is required' })
     .min(1, 'Password is required'),
 });
+
+export const firebaseAuthSchema = z.object({
+  idToken: z
+    .string({ required_error: 'Firebase ID token is required' })
+    .min(1, 'Firebase ID token is required'),
+});

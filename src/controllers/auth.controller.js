@@ -9,6 +9,7 @@ import { ApiError } from '../utils/ApiError.js';
 import { generateToken } from '../utils/generateToken.js';
 import { parseUserAgent, deriveLocation, detectDeviceType } from '../utils/deviceUtils.js';
 import { env } from '../config/env.js';
+import { verifyFirebaseIdToken } from '../utils/verifyFirebaseIdToken.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -22,6 +23,58 @@ function jwtExpiryToMs(expiry = '7d') {
   if (match) return parseInt(match[1]) * (units[match[2].toLowerCase()] || 86_400_000);
   const raw = parseInt(expiry);
   return isNaN(raw) ? 7 * 86_400_000 : raw * 1000;
+}
+
+async function seedDefaultAccountData(userId, fullName, plan = 'free') {
+  await Promise.all([
+    Profile.create({ userId, fullName }),
+    UserPreference.create({ userId }),
+    Subscription.create({
+      userId,
+      plan,
+      status: 'trial',
+      startedAt: new Date(),
+      endsAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    }),
+  ]);
+}
+
+async function persistAuthSession(user, req, action, details = '') {
+  const ua = req.headers['user-agent'] || '';
+  const ip = req.ip || '';
+  const { os, browser, label: deviceLabel } = parseUserAgent(ua);
+  const deviceType = detectDeviceType(ua);
+  const location = deriveLocation(ip);
+  const expiresAt = new Date(Date.now() + jwtExpiryToMs(env.jwtExpiresIn));
+
+  await UserSession.updateMany(
+    { userId: user._id, isActive: true },
+    { $set: { isCurrent: false } }
+  );
+
+  await UserSession.create({
+    userId: user._id,
+    device: os,
+    browser,
+    deviceType,
+    ipAddress: ip,
+    location,
+    isCurrent: true,
+    isActive: true,
+    lastActivityAt: new Date(),
+    expiresAt,
+  });
+
+  await SecurityLog.create({
+    userId: user._id,
+    action,
+    ipAddress: ip,
+    userAgent: ua,
+    device: deviceLabel,
+    location,
+    status: 'success',
+    ...(details ? { details } : {}),
+  });
 }
 
 // ─── Register ──────────────────────────────────────────────────────────────────
@@ -41,22 +94,13 @@ export const register = asyncHandler(async (req, res) => {
     name,
     email,
     password,
+    authProvider: 'local',
     tokenBalance: 10000,
     trialStartedAt: new Date(),
     trialEndsAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
   });
 
-  await Promise.all([
-    Profile.create({ userId: user._id, fullName: name }),
-    UserPreference.create({ userId: user._id }),
-    Subscription.create({
-      userId: user._id,
-      plan: 'free',
-      status: 'trial',
-      startedAt: new Date(),
-      endsAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-    }),
-  ]);
+  await seedDefaultAccountData(user._id, name, 'free');
 
   const token = generateToken(user._id);
   const safeUser = await User.findById(user._id).select('-password');
@@ -74,6 +118,10 @@ export const login = asyncHandler(async (req, res) => {
 
   const user = await User.findOne({ email }).select('+password');
   if (!user) throw new ApiError(401, 'Invalid credentials');
+
+  if (user.authProvider === 'firebase' && !user.password) {
+    throw new ApiError(401, 'This account uses Google sign-in. Please continue with Google.');
+  }
 
   const isPasswordValid = await user.comparePassword(password);
   const ua = req.headers['user-agent'] || '';
@@ -101,38 +149,107 @@ export const login = asyncHandler(async (req, res) => {
   await user.save({ validateBeforeSave: false });
 
   const token = generateToken(user._id);
-  const expiresAt = new Date(Date.now() + jwtExpiryToMs(env.jwtExpiresIn));
+  await persistAuthSession(user, req, 'login');
 
-  // Mark all previous sessions from this user+UA combo as not-current, then create the new one
-  await UserSession.updateMany(
-    { userId: user._id, isActive: true },
-    { $set: { isCurrent: false } }
+  const safeUser = await User.findById(user._id).select('-password');
+
+  res.json({ success: true, token, data: safeUser });
+});
+
+// â”€â”€â”€ Firebase Auth â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+export const firebaseAuth = asyncHandler(async (req, res) => {
+  const { idToken } = req.body;
+
+  if (!idToken) {
+    throw new ApiError(400, 'Firebase ID token is required');
+  }
+
+  const decoded = await verifyFirebaseIdToken(idToken);
+  const email = String(decoded.email || '').trim().toLowerCase();
+
+  if (!email) {
+    throw new ApiError(400, 'Firebase account is missing an email address');
+  }
+
+  const firebaseUid = String(decoded.user_id || decoded.sub || '').trim();
+  const displayName = String(decoded.name || decoded.email || 'Planify user').trim();
+  const avatar = String(decoded.picture || '').trim();
+  const emailVerified = Boolean(decoded.email_verified);
+
+  const userQuery = [{ email }];
+
+  if (firebaseUid) {
+    userQuery.unshift({ firebaseUid });
+  }
+
+  let user = await User.findOne({
+    $or: userQuery
+  });
+
+  let createdUser = false;
+
+  if (!user) {
+    user = await User.create({
+      name: displayName,
+      email,
+      authProvider: 'firebase',
+      firebaseUid,
+      avatar: avatar || undefined,
+      isVerified: emailVerified,
+      tokenBalance: 10000,
+      trialStartedAt: new Date(),
+      trialEndsAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    });
+    createdUser = true;
+    await seedDefaultAccountData(user._id, displayName, 'free');
+  } else {
+    const updates = {};
+
+    if (firebaseUid && user.firebaseUid !== firebaseUid) {
+      updates.firebaseUid = firebaseUid;
+    }
+
+    if (!user.name && displayName) {
+      updates.name = displayName;
+    }
+
+    if (avatar && user.avatar !== avatar) {
+      updates.avatar = avatar;
+    }
+
+    if (emailVerified && !user.isVerified) {
+      updates.isVerified = true;
+    }
+
+    if (user.authProvider !== 'firebase' && !user.password) {
+      updates.authProvider = 'firebase';
+    }
+
+    if (Object.keys(updates).length > 0) {
+      await User.updateOne({ _id: user._id }, { $set: updates });
+      user = await User.findById(user._id);
+    }
+  }
+
+  if (!user) {
+    throw new ApiError(500, 'Unable to create user session');
+  }
+
+  await User.updateOne(
+    { _id: user._id },
+    {
+      $set: {
+        lastLoginAt: new Date(),
+        isVerified: emailVerified || user.isVerified,
+        avatar: avatar || user.avatar || undefined,
+        authProvider: user.authProvider === 'local' ? 'local' : 'firebase',
+      }
+    }
   );
 
-  await UserSession.create({
-    userId: user._id,
-    device: os,
-    browser,
-    deviceType,
-    ipAddress: ip,
-    location,
-    isCurrent: true,
-    isActive: true,
-    lastActivityAt: new Date(),
-    expiresAt,
-  });
+  await persistAuthSession(user, req, createdUser ? 'register' : 'login', 'Firebase authentication');
 
-  // Enrich security log with device info
-  await SecurityLog.create({
-    userId: user._id,
-    action: 'login',
-    ipAddress: ip,
-    userAgent: ua,
-    device: deviceLabel,
-    location,
-    status: 'success',
-  });
-
+  const token = generateToken(user._id);
   const safeUser = await User.findById(user._id).select('-password');
 
   res.json({ success: true, token, data: safeUser });

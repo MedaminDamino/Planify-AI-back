@@ -17,8 +17,21 @@ const userSchema = new mongoose.Schema(
     },
     password: {
       type: String,
-      required: true,
+      required: function () {
+        return this.authProvider === 'local';
+      },
       select: false,
+    },
+    authProvider: {
+      type: String,
+      enum: ['local', 'firebase'],
+      default: 'local',
+    },
+    firebaseUid: {
+      type: String,
+      unique: true,
+      sparse: true,
+      index: true,
     },
     role: {
       type: String,
@@ -70,6 +83,10 @@ userSchema.pre('save', async function () {
 });
 
 userSchema.methods.comparePassword = async function (candidatePassword) {
+  if (!this.password) {
+    return false;
+  }
+
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
