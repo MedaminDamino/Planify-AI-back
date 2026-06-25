@@ -18,6 +18,8 @@ const securityLogSchema = new mongoose.Schema(
         'profile_update',
         'token_purchase',
         'security_update',
+        'session_revoked',
+        'sessions_revoked',
       ],
       required: true,
     },

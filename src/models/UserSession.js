@@ -17,9 +17,11 @@ const userSessionSchema = new mongoose.Schema(
       ref: 'User',
       required: true,
     },
+    tokenId: { type: String },
     // Derived from User-Agent at login time — never stored raw for privacy
     device: { type: String, default: 'Unknown Device' },
     browser: { type: String, default: '' },
+    os: { type: String, default: '' },
     // 'desktop' | 'laptop' | 'mobile' | 'tablet' | 'other'
     deviceType: {
       type: String,
@@ -31,6 +33,8 @@ const userSessionSchema = new mongoose.Schema(
     userAgent: { type: String, select: false }, // stored but not returned by default
     isCurrent: { type: Boolean, default: false },
     isActive: { type: Boolean, default: true },
+    isRevoked: { type: Boolean, default: false },
+    lastActivity: { type: Date, default: Date.now },
     lastActivityAt: { type: Date, default: Date.now },
     expiresAt: { type: Date, required: true },
   },

@@ -91,12 +91,5 @@ export function parseUserAgent(ua = '') {
 }
 
 export function deriveLocation(ip = '') {
-  const cleaned = ip.replace(/^::ffff:/, '');
-  if (cleaned === '::1' || cleaned === '127.0.0.1') {
-    return 'Rabat, Morocco';
-  }
-  // Alternating cities for mock/private networks to look premium
-  const cities = ['Rabat, Morocco', 'Casablanca, Morocco', 'Marrakech, Morocco'];
-  const hash = cleaned.split('.').reduce((acc, val) => acc + parseInt(val || '0'), 0);
-  return cities[isNaN(hash) ? 0 : hash % cities.length];
+  return '';
 }

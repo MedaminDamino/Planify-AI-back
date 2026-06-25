@@ -48,22 +48,29 @@ async function persistAuthSession(user, req, action, details = '') {
   const expiresAt = new Date(Date.now() + jwtExpiryToMs(env.jwtExpiresIn));
 
   await UserSession.updateMany(
-    { userId: user._id, isActive: true },
+    { userId: user._id, isRevoked: false },
     { $set: { isCurrent: false } }
   );
 
-  await UserSession.create({
+  const session = await UserSession.create({
     userId: user._id,
     device: os,
     browser,
+    os,
     deviceType,
     ipAddress: ip,
-    location,
+    location: location || undefined,
+    userAgent: ua,
     isCurrent: true,
     isActive: true,
+    isRevoked: false,
+    lastActivity: new Date(),
     lastActivityAt: new Date(),
     expiresAt,
   });
+
+  session.tokenId = session._id.toString();
+  await session.save();
 
   await SecurityLog.create({
     userId: user._id,
@@ -71,10 +78,12 @@ async function persistAuthSession(user, req, action, details = '') {
     ipAddress: ip,
     userAgent: ua,
     device: deviceLabel,
-    location,
+    location: location || undefined,
     status: 'success',
     ...(details ? { details } : {}),
   });
+
+  return session;
 }
 
 // ─── Register ──────────────────────────────────────────────────────────────────
@@ -102,7 +111,8 @@ export const register = asyncHandler(async (req, res) => {
 
   await seedDefaultAccountData(user._id, name, 'free');
 
-  const token = generateToken(user._id);
+  const session = await persistAuthSession(user, req, 'register', 'Account registration');
+  const token = generateToken(user._id, session._id);
   const safeUser = await User.findById(user._id).select('-password');
 
   res.status(201).json({ success: true, token, data: safeUser });
@@ -137,7 +147,7 @@ export const login = asyncHandler(async (req, res) => {
       ipAddress: ip,
       userAgent: ua,
       device: deviceLabel,
-      location,
+      location: location || undefined,
       status: 'failed',
       details: 'Wrong password',
     });
@@ -148,8 +158,8 @@ export const login = asyncHandler(async (req, res) => {
   user.lastLoginAt = new Date();
   await user.save({ validateBeforeSave: false });
 
-  const token = generateToken(user._id);
-  await persistAuthSession(user, req, 'login');
+  const session = await persistAuthSession(user, req, 'login');
+  const token = generateToken(user._id, session._id);
 
   const safeUser = await User.findById(user._id).select('-password');
 
@@ -251,9 +261,9 @@ export const firebaseAuth = asyncHandler(async (req, res) => {
     }
   );
 
-  await persistAuthSession(user, req, createdUser ? 'register' : 'login', 'Firebase authentication');
+  const session = await persistAuthSession(user, req, createdUser ? 'register' : 'login', 'Firebase authentication');
 
-  const token = generateToken(user._id);
+  const token = generateToken(user._id, session._id);
   const safeUser = await User.findById(user._id).select('-password');
 
   res.json({ success: true, token, data: safeUser });
@@ -272,10 +282,17 @@ export const logout = asyncHandler(async (req, res) => {
   const location = deriveLocation(ip);
 
   // Deactivate the current session so it no longer appears in Active Sessions
-  await UserSession.updateMany(
-    { userId: req.user._id, isCurrent: true, isActive: true },
-    { $set: { isActive: false, isCurrent: false } }
-  );
+  if (req.sessionId) {
+    await UserSession.updateOne(
+      { _id: req.sessionId },
+      { $set: { isActive: false, isCurrent: false } }
+    );
+  } else {
+    await UserSession.updateMany(
+      { userId: req.user._id, isCurrent: true, isActive: true },
+      { $set: { isActive: false, isCurrent: false } }
+    );
+  }
 
   await SecurityLog.create({
     userId: req.user._id,
@@ -283,9 +300,59 @@ export const logout = asyncHandler(async (req, res) => {
     ipAddress: ip,
     userAgent: ua,
     device: deviceLabel,
-    location,
+    location: location || undefined,
     status: 'success',
   });
 
   res.json({ success: true, message: 'Logout successful' });
+});
+
+// ─── Change Password ───────────────────────────────────────────────────────────
+export const changePassword = asyncHandler(async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+
+  if (!currentPassword || !newPassword) {
+    throw new ApiError(400, 'Current password and new password are required');
+  }
+
+  const user = await User.findById(req.user._id).select('+password');
+  if (!user) {
+    throw new ApiError(404, 'User not found');
+  }
+
+  if (user.authProvider === 'firebase' && !user.password) {
+    throw new ApiError(400, 'This account is authenticated via Google. Password change is not supported.');
+  }
+
+  const isMatch = await user.comparePassword(currentPassword);
+  if (!isMatch) {
+    throw new ApiError(401, 'Incorrect current password');
+  }
+
+  if (newPassword.length < 8) {
+    throw new ApiError(400, 'New password must be at least 8 characters long');
+  }
+
+  user.password = newPassword;
+  user.passwordChangedAt = new Date();
+  await user.save();
+
+  // Log successful password change
+  const ua = req.headers['user-agent'] || '';
+  const ip = req.ip || '';
+  const { label: deviceLabel } = parseUserAgent(ua);
+  const location = deriveLocation(ip);
+
+  await SecurityLog.create({
+    userId: user._id,
+    action: 'password_change',
+    ipAddress: ip,
+    userAgent: ua,
+    device: deviceLabel,
+    location: location || undefined,
+    status: 'success',
+    details: 'Password updated successfully',
+  });
+
+  res.json({ success: true, message: 'Password updated successfully' });
 });

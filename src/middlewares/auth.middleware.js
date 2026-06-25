@@ -1,10 +1,9 @@
 import jwt from "jsonwebtoken";
-
 import User from "../models/User.js";
-
+import UserSession from "../models/UserSession.js";
 import { env } from "../config/env.js";
-
 import { ApiError } from "../utils/ApiError.js";
+import { parseUserAgent, detectDeviceType, deriveLocation } from "../utils/deviceUtils.js";
 
 export const protect = async (req, res, next) => {
   try {
@@ -24,6 +23,65 @@ export const protect = async (req, res, next) => {
       throw new ApiError(401, "User not found");
     }
 
+    let session = null;
+
+    if (decoded.sessionId) {
+      session = await UserSession.findOne({
+        _id: decoded.sessionId,
+        userId: decoded.userId,
+        isRevoked: false,
+        expiresAt: { $gt: new Date() }
+      });
+
+      if (!session) {
+        throw new ApiError(401, "Session has been revoked or expired");
+      }
+    } else {
+      // Legacy token: find or create session
+      const ua = req.headers['user-agent'] || '';
+      const ip = req.ip || '';
+      session = await UserSession.findOne({
+        userId: decoded.userId,
+        userAgent: ua,
+        ipAddress: ip,
+        isRevoked: false,
+        expiresAt: { $gt: new Date() }
+      });
+
+      if (!session) {
+        const { os, browser } = parseUserAgent(ua);
+        const deviceType = detectDeviceType(ua);
+        const location = deriveLocation(ip);
+        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days fallback
+
+        session = await UserSession.create({
+          userId: decoded.userId,
+          device: os,
+          browser,
+          os,
+          deviceType,
+          ipAddress: ip,
+          location,
+          userAgent: ua,
+          isCurrent: true,
+          isActive: true,
+          isRevoked: false,
+          lastActivity: new Date(),
+          lastActivityAt: new Date(),
+          expiresAt,
+        });
+
+        session.tokenId = session._id.toString();
+        await session.save();
+      }
+    }
+
+    // Update last activity
+    session.lastActivity = new Date();
+    session.lastActivityAt = new Date();
+    await session.save();
+
+    req.sessionId = session._id;
     req.user = user;
 
     next();

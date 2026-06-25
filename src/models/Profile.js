@@ -1,5 +1,42 @@
 import mongoose from 'mongoose';
 
+const studyGoalSchema = new mongoose.Schema(
+  {
+    title: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    description: {
+      type: String,
+      trim: true,
+    },
+    targetValue: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+    currentValue: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    unit: {
+      type: String,
+      trim: true,
+    },
+    deadline: Date,
+    status: {
+      type: String,
+      enum: ['active', 'completed', 'archived'],
+      default: 'active',
+    },
+  },
+  {
+    timestamps: true,
+  }
+);
+
 const profileSchema = new mongoose.Schema(
   {
     userId: {
@@ -22,6 +59,7 @@ const profileSchema = new mongoose.Schema(
     studentId: String,
     gpa: String,
     tags: [String],
+    studyGoals: [studyGoalSchema],
     // Account Recovery fields
     recoveryEmail: {
       type: String,

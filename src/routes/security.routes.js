@@ -10,6 +10,12 @@ import {
   getSessions,
   revokeSession,
   revokeAllSessions,
+  get2fa,
+  setup2fa,
+  verify2fa,
+  disable2fa,
+  getBackupCodesInfo,
+  regenerateBackupCodes,
 } from '../controllers/security.controller.js';
 import { protect } from '../middlewares/auth.middleware.js';
 
@@ -35,5 +41,13 @@ router.put('/recovery',   updateRecovery);
 // ─── Additional Security Preferences ─────────────────────────────────────────
 router.get('/preferences',  getSecurityPreferences);
 router.put('/preferences',  updateSecurityPreferences);
+
+// ─── Two-Factor Authentication ───────────────────────────────────────────────
+router.get('/2fa',                    get2fa);
+router.post('/2fa/setup',             setup2fa);
+router.post('/2fa/verify',            verify2fa);
+router.post('/2fa/disable',           disable2fa);
+router.get('/backup-codes',           getBackupCodesInfo);
+router.post('/backup-codes/regenerate', regenerateBackupCodes);
 
 export default router;
