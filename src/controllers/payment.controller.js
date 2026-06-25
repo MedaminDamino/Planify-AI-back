@@ -62,7 +62,7 @@ export const createDemoPayment = asyncHandler(async (req, res) => {
     userId: req.user._id,
     subscriptionId: subscriptionId || undefined,
     amount,
-    currency: 'USD',
+    currency: 'TND',
     status: 'paid',
     type,
     provider: 'demo',

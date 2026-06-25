@@ -26,7 +26,7 @@ const PLAN_CONFIG = {
 const planToDto = (id, config, badge) => ({
   id,
   name: id === 'pro' ? 'Pro Plan' : 'Student Plan',
-  priceLabel: `$${config.price.toFixed(2)} / month`,
+  priceLabel: `${config.price.toFixed(2)} TND / month`,
   badge: badge || undefined,
   features: config.features,
   cta: id === 'pro' ? 'Upgrade to Pro' : 'Choose Student'
