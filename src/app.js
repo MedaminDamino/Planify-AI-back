@@ -28,6 +28,7 @@ import paymentRoutes from './routes/payment.routes.js';
 import securityLogRoutes from './routes/securityLog.routes.js';
 import securityRoutes from './routes/security.routes.js';
 import studyPreferenceRoutes from './routes/studyPreference.routes.js';
+import dashboardRoutes from './routes/dashboard.routes.js';
 
 const app = express();
 
@@ -111,6 +112,7 @@ app.use('/api/files', fileRoutes);
 app.use('/api/tokens', tokenRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/preferences', userPreferenceRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api/payments', paymentRoutes);
