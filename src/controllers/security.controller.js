@@ -184,10 +184,30 @@ export const getSessions = asyncHandler(async (req, res) => {
     };
   });
 
-  // Sort current session first
-  mappedSessions.sort((a, b) => (b.isCurrent ? 1 : 0) - (a.isCurrent ? 1 : 0));
+  // Deduplicate by fingerprint (keep the first/latest active one per fingerprint)
+  const uniqueSessions = [];
+  const seenFingerprints = new Set();
 
-  res.json({ success: true, count: mappedSessions.length, data: mappedSessions });
+  for (const session of mappedSessions) {
+    const fp = session.fingerprint || `${session.userId}_${session.os}_${session.browser}_${session.deviceType}_${session.deviceId || ''}`;
+    if (!seenFingerprints.has(fp)) {
+      seenFingerprints.add(fp);
+      uniqueSessions.push(session);
+    } else {
+      const existingIdx = uniqueSessions.findIndex(s => {
+        const sFp = s.fingerprint || `${s.userId}_${s.os}_${s.browser}_${s.deviceType}_${s.deviceId || ''}`;
+        return sFp === fp;
+      });
+      if (session.isCurrent && existingIdx !== -1) {
+        uniqueSessions[existingIdx] = session;
+      }
+    }
+  }
+
+  // Sort current session first
+  uniqueSessions.sort((a, b) => (b.isCurrent ? 1 : 0) - (a.isCurrent ? 1 : 0));
+
+  res.json({ success: true, count: uniqueSessions.length, data: uniqueSessions });
 });
 
 // DELETE /api/security/sessions/:id  (revoke one session)

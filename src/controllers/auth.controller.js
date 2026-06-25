@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import User from '../models/User.js';
 import Profile from '../models/Profile.js';
 import UserPreference from '../models/UserPreference.js';
@@ -46,31 +47,57 @@ async function persistAuthSession(user, req, action, details = '') {
   const deviceType = detectDeviceType(ua);
   const location = deriveLocation(ip);
   const expiresAt = new Date(Date.now() + jwtExpiryToMs(env.jwtExpiresIn));
+  const deviceId = req.headers['x-device-id'] || '';
+
+  // Generate fingerprint from userId, OS, browser, device type, and stable deviceId
+  const fingerprintRaw = `${user._id.toString()}_${os || ''}_${browser || ''}_${deviceType || ''}_${deviceId}`;
+  const fingerprint = crypto.createHash('sha256').update(fingerprintRaw).digest('hex');
 
   await UserSession.updateMany(
     { userId: user._id, isRevoked: false },
     { $set: { isCurrent: false } }
   );
 
-  const session = await UserSession.create({
+  let session = await UserSession.findOne({
     userId: user._id,
-    device: os,
-    browser,
-    os,
-    deviceType,
-    ipAddress: ip,
-    location: location || undefined,
-    userAgent: ua,
-    isCurrent: true,
-    isActive: true,
-    isRevoked: false,
-    lastActivity: new Date(),
-    lastActivityAt: new Date(),
-    expiresAt,
+    fingerprint,
   });
 
-  session.tokenId = session._id.toString();
-  await session.save();
+  if (session) {
+    // Reactivate and update existing session
+    session.isRevoked = false;
+    session.isActive = true;
+    session.isCurrent = true;
+    session.ipAddress = ip;
+    session.location = location || undefined;
+    session.userAgent = ua;
+    session.lastActivity = new Date();
+    session.lastActivityAt = new Date();
+    session.expiresAt = expiresAt;
+    await session.save();
+  } else {
+    // Create new session
+    session = await UserSession.create({
+      userId: user._id,
+      device: os,
+      browser,
+      os,
+      deviceType,
+      ipAddress: ip,
+      location: location || undefined,
+      userAgent: ua,
+      isCurrent: true,
+      isActive: true,
+      isRevoked: false,
+      lastActivity: new Date(),
+      lastActivityAt: new Date(),
+      expiresAt,
+      fingerprint,
+      deviceId,
+    });
+    session.tokenId = session._id.toString();
+    await session.save();
+  }
 
   await SecurityLog.create({
     userId: user._id,
@@ -285,12 +312,12 @@ export const logout = asyncHandler(async (req, res) => {
   if (req.sessionId) {
     await UserSession.updateOne(
       { _id: req.sessionId },
-      { $set: { isActive: false, isCurrent: false } }
+      { $set: { isActive: false, isCurrent: false, isRevoked: true } }
     );
   } else {
     await UserSession.updateMany(
       { userId: req.user._id, isCurrent: true, isActive: true },
-      { $set: { isActive: false, isCurrent: false } }
+      { $set: { isActive: false, isCurrent: false, isRevoked: true } }
     );
   }
 

@@ -31,6 +31,8 @@ const userSessionSchema = new mongoose.Schema(
     ipAddress: { type: String, default: '' },
     location: { type: String, default: '' },
     userAgent: { type: String, select: false }, // stored but not returned by default
+    deviceId: { type: String, default: '' },
+    fingerprint: { type: String, default: '' },
     isCurrent: { type: Boolean, default: false },
     isActive: { type: Boolean, default: true },
     isRevoked: { type: Boolean, default: false },
@@ -46,6 +48,7 @@ const userSessionSchema = new mongoose.Schema(
 // Compound index for fast per-user queries
 userSessionSchema.index({ userId: 1, isActive: 1 });
 userSessionSchema.index({ userId: 1, isCurrent: 1 });
+userSessionSchema.index({ userId: 1, fingerprint: 1 });
 
 // TTL index — MongoDB auto-removes expired sessions (no cron needed)
 userSessionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });

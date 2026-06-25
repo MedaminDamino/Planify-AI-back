@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import UserSession from "../models/UserSession.js";
@@ -40,18 +41,23 @@ export const protect = async (req, res, next) => {
       // Legacy token: find or create session
       const ua = req.headers['user-agent'] || '';
       const ip = req.ip || '';
+      const deviceId = req.headers['x-device-id'] || '';
+      const { os, browser } = parseUserAgent(ua);
+      const deviceType = detectDeviceType(ua);
+      const location = deriveLocation(ip);
+
+      // Generate fingerprint from userId, OS, browser, device type, and stable deviceId
+      const fingerprintRaw = `${decoded.userId}_${os || ''}_${browser || ''}_${deviceType || ''}_${deviceId}`;
+      const fingerprint = crypto.createHash('sha256').update(fingerprintRaw).digest('hex');
+
       session = await UserSession.findOne({
         userId: decoded.userId,
-        userAgent: ua,
-        ipAddress: ip,
+        fingerprint,
         isRevoked: false,
         expiresAt: { $gt: new Date() }
       });
 
       if (!session) {
-        const { os, browser } = parseUserAgent(ua);
-        const deviceType = detectDeviceType(ua);
-        const location = deriveLocation(ip);
         const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days fallback
 
         session = await UserSession.create({
@@ -61,7 +67,7 @@ export const protect = async (req, res, next) => {
           os,
           deviceType,
           ipAddress: ip,
-          location,
+          location: location || undefined,
           userAgent: ua,
           isCurrent: true,
           isActive: true,
@@ -69,6 +75,8 @@ export const protect = async (req, res, next) => {
           lastActivity: new Date(),
           lastActivityAt: new Date(),
           expiresAt,
+          fingerprint,
+          deviceId,
         });
 
         session.tokenId = session._id.toString();
