@@ -213,7 +213,10 @@ export const firebaseAuth = asyncHandler(async (req, res) => {
       updates.name = displayName;
     }
 
-    if (avatar && user.avatar !== avatar) {
+    // Only set Google avatar when the user has NO existing avatar.
+    // This preserves any custom avatar uploaded by the user after account creation.
+    // Google photoURL is only used at first-time account creation (createdUser branch above).
+    if (avatar && !user.avatar) {
       updates.avatar = avatar;
     }
 
@@ -241,7 +244,8 @@ export const firebaseAuth = asyncHandler(async (req, res) => {
       $set: {
         lastLoginAt: new Date(),
         isVerified: emailVerified || user.isVerified,
-        avatar: avatar || user.avatar || undefined,
+        // Only set Google avatar if user has no existing avatar (preserve custom uploads).
+        ...(avatar && !user.avatar ? { avatar } : {}),
         authProvider: user.authProvider === 'local' ? 'local' : 'firebase',
       }
     }
