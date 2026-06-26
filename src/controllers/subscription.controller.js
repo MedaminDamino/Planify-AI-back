@@ -3,7 +3,7 @@ import User from '../models/User.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
 
-const PLAN_CONFIG = {
+export const PLAN_CONFIG = {
   student: {
     price: 9.99,
     tokenLimit: 50000,

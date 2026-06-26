@@ -3,7 +3,7 @@ import TokenTransaction from '../models/TokenTransaction.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
 
-const TOKEN_PACKS = [
+export const TOKEN_PACKS = [
   { id: 'starter', name: 'Starter Pack', tokens: 2000, price: 4.99, popular: false },
   { id: 'standard', name: 'Standard Pack', tokens: 5000, price: 9.99, popular: true },
   { id: 'pro', name: 'Pro Pack', tokens: 12000, price: 19.99, popular: false },
@@ -29,11 +29,14 @@ export const getHistory = asyncHandler(async (req, res) => {
 
 // POST /api/tokens/buy-demo
 export const buyDemoTokens = asyncHandler(async (req, res) => {
-  const { amount } = req.body;
+  const { packId } = req.body;
 
-  if (!amount || typeof amount !== 'number' || amount <= 0) {
-    throw new ApiError(400, 'Provide a valid positive amount');
+  const pack = TOKEN_PACKS.find(p => p.id === packId);
+  if (!pack) {
+    throw new ApiError(400, 'Invalid packId');
   }
+
+  const amount = pack.tokens;
 
   const user = await User.findById(req.user._id);
   const balanceBefore = user.tokenBalance;
@@ -46,7 +49,7 @@ export const buyDemoTokens = asyncHandler(async (req, res) => {
     userId: user._id,
     type: 'purchase',
     amount,
-    reason: 'Demo token purchase',
+    reason: `Demo token purchase (${pack.name})`,
     balanceBefore,
     balanceAfter,
   });
