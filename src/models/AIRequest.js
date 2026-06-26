@@ -19,9 +19,25 @@ const aiRequestSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Task',
     },
+    examId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Exam',
+    },
     type: {
       type: String,
-      enum: ['daily_plan', 'summary', 'exercises', 'chat', 'priority', 'flashcards', 'exam_prep'],
+      enum: [
+        'daily_plan',
+        'summary',
+        'summarize_file',
+        'exercises',
+        'chat',
+        'priority',
+        'prioritize_tasks',
+        'flashcards',
+        'exam_prep',
+        'revision_plan',
+        'dashboard_recommendations',
+      ],
       required: true,
     },
     prompt: {

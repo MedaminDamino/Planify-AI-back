@@ -10,4 +10,6 @@ export const env = {
   jwtExpiresIn: process.env.JWT_EXPIRES_IN,
   clientUrl: process.env.CLIENT_URL,
   firebaseProjectId: process.env.FIREBASE_PROJECT_ID,
+  geminiApiKey: process.env.GEMINI_API_KEY,
+  geminiModel: process.env.GEMINI_MODEL || "gemini-2.5-flash",
 };
