@@ -84,6 +84,11 @@ const userSchema = new mongoose.Schema(
       type: [String],
       select: false,
     },
+    stripeCustomerId: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
   },
   {
     timestamps: true,

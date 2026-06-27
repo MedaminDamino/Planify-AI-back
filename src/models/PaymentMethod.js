@@ -8,6 +8,14 @@ const paymentMethodSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    stripePaymentMethodId: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
+    stripeCustomerId: {
+      type: String,
+    },
     brand: {
       type: String,
       required: true,
@@ -19,6 +27,15 @@ const paymentMethodSchema = new mongoose.Schema(
     expiry: {
       type: String,
       required: true,
+    },
+    last4: {
+      type: String,
+    },
+    expMonth: {
+      type: Number,
+    },
+    expYear: {
+      type: Number,
     },
     isDefault: {
       type: Boolean,

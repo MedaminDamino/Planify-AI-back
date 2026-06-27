@@ -29,6 +29,7 @@ import securityLogRoutes from './routes/securityLog.routes.js';
 import securityRoutes from './routes/security.routes.js';
 import studyPreferenceRoutes from './routes/studyPreference.routes.js';
 import dashboardRoutes from './routes/dashboard.routes.js';
+import { handleStripeWebhook } from './controllers/payment.controller.js';
 
 const app = express();
 
@@ -78,6 +79,8 @@ if (process.env.NODE_ENV !== 'test') {
 // ─── Body Parsing ──────────────────────────────────────────────────────────────
 // Note: multer handles its own parsing for multipart/form-data routes.
 // These parsers only run on JSON / urlencoded requests.
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), handleStripeWebhook);
+
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
