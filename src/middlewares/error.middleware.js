@@ -16,5 +16,13 @@ export const errorMiddleware = (err, req, res, next) => {
     response.stack = err.stack;
   }
 
+  if (!isProd && err.details !== undefined) {
+    response.details = err.details;
+  }
+
+  if (!isProd && err.validationIssues !== undefined) {
+    response.validationIssues = err.validationIssues;
+  }
+
   res.status(statusCode).json(response);
 };

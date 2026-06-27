@@ -3,9 +3,11 @@ import { randomUUID } from 'node:crypto';
 import Course from '../models/Course.js';
 import Exam from '../models/Exam.js';
 import File from '../models/File.js';
+import ScheduleEvent from '../models/ScheduleEvent.js';
 import TokenTransaction from '../models/TokenTransaction.js';
 import User from '../models/User.js';
 import Task from '../models/Task.js';
+import { z } from 'zod';
 import { ApiError } from '../utils/ApiError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { getGeminiService, GeminiConfigurationError } from './gemini.service.js';
@@ -16,6 +18,8 @@ import {
   buildGenerateExercisesPrompt,
   buildPrioritizeTasksPrompt,
   buildRevisionPlanPrompt,
+  buildScheduleBuilderChatPrompt,
+  buildScheduleBuilderGeneratePrompt,
   buildSummarizeFilePrompt,
   getBaseSystemInstruction,
 } from '../utils/aiPromptBuilder.js';
@@ -36,6 +40,8 @@ const TOKEN_COSTS = {
   revision_plan: 700,
   chat: 300,
   dashboard_recommendations: 250,
+  schedule_builder_chat: 300,
+  schedule_builder_generate: 1200,
 };
 
 const AI_TYPES = {
@@ -46,6 +52,8 @@ const AI_TYPES = {
   revisionPlan: 'revision_plan',
   chat: 'chat',
   dashboardRecommendations: 'dashboard_recommendations',
+  scheduleBuilderChat: 'schedule_builder_chat',
+  scheduleBuilderGenerate: 'schedule_builder_generate',
 };
 
 const CHAT_RESPONSE_TYPES = new Set([
@@ -57,6 +65,8 @@ const CHAT_RESPONSE_TYPES = new Set([
   'daily_plan',
   'revision_plan',
   'prioritize_tasks',
+  'schedule_builder_chat',
+  'schedule_builder_generate',
 ]);
 
 function logAiEvent(level, message, meta = {}) {
@@ -161,9 +171,126 @@ function buildConversationTitle(mode, message, topic = '') {
       return `Task priorities: ${cleaned}`;
     case 'revision_plan':
       return `Revision plan: ${cleaned}`;
+    case 'schedule_builder_chat':
+    case 'schedule_builder_generate':
+      return `Schedule Builder: ${cleaned}`;
     default:
       return cleaned;
   }
+}
+
+function isDevelopment() {
+  return safeString(process.env.NODE_ENV, 'development') === 'development';
+}
+
+function truncateForLog(value, maxLength = 4000) {
+  const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+  if (!text) return '';
+  return text.length > maxLength ? `${text.slice(0, maxLength)}... [truncated ${text.length - maxLength} chars]` : text;
+}
+
+function safeJsonStringify(value) {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return '';
+  }
+}
+
+function getErrorStatus(error) {
+  const status = Number(error?.statusCode || error?.status);
+  return Number.isFinite(status) ? status : null;
+}
+
+function parseGeminiErrorPayload(error) {
+  const message = safeString(error?.message);
+  const parsed = safeJsonParse(message);
+  if (isPlainObject(parsed?.error)) {
+    return {
+      status: Number(parsed.error.code || parsed.error.status || error?.status || error?.statusCode) || null,
+      message: safeString(parsed.error.message, message),
+      code: safeString(parsed.error.status, ''),
+      rawMessage: message,
+    };
+  }
+
+  return {
+    status: getErrorStatus(error),
+    message,
+    code: safeString(error?.code, ''),
+    rawMessage: message,
+  };
+}
+
+function isRetryableGeminiError(error) {
+  const status = getErrorStatus(error);
+  if ([429, 500, 503, 504, 408].includes(status)) return true;
+
+  const message = safeString(error?.message).toLowerCase();
+  return [
+    'timed out',
+    'timeout',
+    'network',
+    'fetch failed',
+    'econnreset',
+    'etimedout',
+    'eai_again',
+    'socket hang up',
+  ].some((token) => message.includes(token));
+}
+
+function buildGeminiErrorResponse(error, fallbackMessage = 'Gemini AI request failed. Please try again.') {
+  const parsed = parseGeminiErrorPayload(error);
+  const status = parsed.status && parsed.status >= 400 ? parsed.status : 503;
+  const message = isDevelopment() && parsed.message ? parsed.message : fallbackMessage;
+
+  const apiError = new ApiError(status, message, { cause: error });
+  apiError.stack = error?.stack || apiError.stack;
+  apiError.rawGeminiError = parsed.rawMessage;
+  apiError.geminiStatus = parsed.status;
+  apiError.geminiCode = parsed.code;
+  return apiError;
+}
+
+function summarizeScheduleContextForLog(context) {
+  return {
+    courses: safeArray(context?.courses).length,
+    tasks: safeArray(context?.tasks).length,
+    exams: safeArray(context?.exams).length,
+    files: safeArray(context?.files).length,
+    schedule: safeArray(context?.schedule).length,
+    recentSchedule: safeArray(context?.recentSchedule).length,
+    busyPeriods: safeArray(context?.busyPeriods).length,
+    freePeriods: safeArray(context?.freePeriods).length,
+    conversationHistory: safeArray(context?.conversationHistory).length,
+  };
+}
+
+function getPromptStats(promptPackage, prompt) {
+  const systemInstruction = safeString(promptPackage?.systemInstruction);
+  const schema = promptPackage?.responseSchema || null;
+
+  return {
+    promptLength: safeString(prompt).length,
+    systemInstructionLength: systemInstruction.length,
+    schemaLength: safeJsonStringify(schema).length,
+  };
+}
+
+function getWeekBounds(dateValue = new Date()) {
+  const base = new Date(dateValue);
+  const day = base.getDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  const start = new Date(base);
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() + mondayOffset);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  end.setHours(23, 59, 59, 999);
+  return {
+    start,
+    end,
+  };
 }
 
 function sanitizeResponseType(value, fallback = 'chat') {
@@ -726,6 +853,15 @@ function isUsablePayload(type, payload) {
         || isPlainObject(payload.revisionPlan)
         || isPlainObject(payload.prioritizedTasks)
         || isPlainObject(payload.dailyPlan);
+    case AI_TYPES.scheduleBuilderChat:
+      return typeof payload.reply === 'string'
+        || typeof payload.followUpQuestion === 'string'
+        || payload.readyToGenerate === true;
+    case AI_TYPES.scheduleBuilderGenerate:
+      return Array.isArray(payload.events) && payload.events.length > 0
+        || Array.isArray(payload.generatedSchedule) && payload.generatedSchedule.length > 0
+        || Array.isArray(payload.schedule) && payload.schedule.length > 0
+        || isPlainObject(payload.metadata);
     case AI_TYPES.dashboardRecommendations:
       return Array.isArray(payload.recommendations);
     default:
@@ -1119,6 +1255,565 @@ function normalizeDashboardRecommendations(payload) {
   };
 }
 
+function mapAiConversationHistory(requests = []) {
+  const messages = [];
+
+  for (const request of requests) {
+    const userMessage = pickString(request?.originalUserMessage, request?.prompt);
+    const assistantMessage = pickString(request?.assistantMessage, request?.response);
+
+    if (userMessage) {
+      messages.push({
+        role: 'user',
+        content: userMessage,
+        type: request?.type || 'schedule_builder_chat',
+      });
+    }
+
+    if (assistantMessage) {
+      messages.push({
+        role: 'assistant',
+        content: assistantMessage,
+        type: request?.type || 'schedule_builder_chat',
+      });
+    }
+  }
+
+  return messages.slice(-20);
+}
+
+const SCHEDULE_BUILDER_TYPES = [AI_TYPES.scheduleBuilderChat, AI_TYPES.scheduleBuilderGenerate];
+
+function parseScheduleBound(value, fallback) {
+  if (!value) return fallback;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? fallback : date;
+}
+
+function clampDateToRange(value, minValue, maxValue) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const minTime = new Date(minValue).getTime();
+  const maxTime = new Date(maxValue).getTime();
+  const time = Math.min(Math.max(date.getTime(), minTime), maxTime);
+  return new Date(time);
+}
+
+function formatValidationIssues(issues = []) {
+  return issues.map((issue) => {
+    const path = issue.path || 'payload';
+    return `${path}: ${issue.message}`;
+  }).join('; ');
+}
+
+function resolveScheduleWeekBounds(input = {}) {
+  const base = input.date ? new Date(input.date) : new Date();
+
+  if (input.weekStart || input.weekEnd) {
+    const fallbackBounds = getWeekBounds(base);
+    return {
+      start: parseScheduleBound(input.weekStart, fallbackBounds.start),
+      end: parseScheduleBound(input.weekEnd, fallbackBounds.end),
+    };
+  }
+
+  return getWeekBounds(base);
+}
+
+const scheduleGenerationEventSchema = z.object({
+  title: z.string().min(1),
+  description: z.string().default(''),
+  category: z.enum(['class', 'study', 'exam', 'task', 'break', 'personal', 'work', 'appointment']),
+  start: z.string().min(1),
+  end: z.string().min(1),
+  priority: z.enum(['low', 'medium', 'high']).default('medium'),
+  flexibility: z.enum(['fixed', 'flexible']).default('flexible'),
+  reason: z.string().min(1),
+}).superRefine((event, ctx) => {
+  const start = toValidScheduleDate(event.start);
+  const end = toValidScheduleDate(event.end);
+
+  if (!start) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['start'],
+      message: 'start must be a valid ISO datetime string.',
+    });
+  }
+
+  if (!end) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['end'],
+      message: 'end must be a valid ISO datetime string.',
+    });
+  }
+
+  if (start && end && end.getTime() <= start.getTime()) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['end'],
+      message: 'end must be later than start.',
+    });
+  }
+});
+
+const scheduleGenerationOutputSchema = z.object({
+  type: z.literal('schedule_generation'),
+  metadata: z.object({
+    title: z.string().min(1),
+    weekStart: z.string().min(1),
+    weekEnd: z.string().min(1),
+    timezone: z.string().min(1),
+    language: z.string().min(1),
+  }),
+  summary: z.string().min(1),
+  events: z.array(scheduleGenerationEventSchema),
+  recommendations: z.array(z.string().min(1)).default([]),
+  warnings: z.array(z.string().min(1)).default([]),
+  conflicts: z.array(z.string().min(1)).default([]),
+}).superRefine((value, ctx) => {
+  const weekStart = toValidScheduleDate(value.metadata.weekStart);
+  const weekEnd = toValidScheduleDate(value.metadata.weekEnd);
+
+  if (!weekStart) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['metadata', 'weekStart'],
+      message: 'metadata.weekStart must be a valid ISO datetime string.',
+    });
+  }
+
+  if (!weekEnd) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['metadata', 'weekEnd'],
+      message: 'metadata.weekEnd must be a valid ISO datetime string.',
+    });
+  }
+
+  if (weekStart && weekEnd && weekEnd.getTime() <= weekStart.getTime()) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['metadata', 'weekEnd'],
+      message: 'metadata.weekEnd must be later than metadata.weekStart.',
+    });
+  }
+
+  if (weekStart && weekEnd) {
+    value.events.forEach((event, index) => {
+      const eventStart = toValidScheduleDate(event.start);
+      const eventEnd = toValidScheduleDate(event.end);
+
+      if (eventStart && eventStart.getTime() < weekStart.getTime()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['events', index, 'start'],
+          message: 'Event start must fall within the selected week.',
+        });
+      }
+
+      if (eventEnd && eventEnd.getTime() > weekEnd.getTime()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['events', index, 'end'],
+          message: 'Event end must fall within the selected week.',
+        });
+      }
+
+      if (eventStart && eventEnd && eventEnd.getTime() <= eventStart.getTime()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['events', index, 'end'],
+          message: 'Event end must be later than event start.',
+        });
+      }
+    });
+  }
+});
+
+function normalizeScheduleBuilderChat(payload, context) {
+  const readyToGenerate = Boolean(payload?.readyToGenerate || safeString(payload?.conversationStage).toLowerCase() === 'ready');
+  const reply = pickString(payload?.reply, readyToGenerate
+    ? 'I have enough context to build the schedule when you are ready.'
+    : 'Tell me a bit more about your week so I can plan it well.');
+
+  return {
+    reply,
+    followUpQuestion: pickString(payload?.followUpQuestion, readyToGenerate ? '' : 'What are your fixed commitments and study priorities?'),
+    readyToGenerate,
+    conversationStage: readyToGenerate ? 'ready' : 'gathering',
+    nextActions: normalizeStringArray(payload?.nextActions).slice(0, 5),
+    missingInformation: normalizeStringArray(payload?.missingInformation).slice(0, 5),
+    summary: pickString(payload?.summary, readyToGenerate ? 'Enough information collected to generate a weekly schedule.' : 'More context is needed before generating the schedule.'),
+    confidence: pickString(payload?.confidence, 'high'),
+    topic: pickString(payload?.topic, context.course?.title || 'Schedule planning'),
+  };
+}
+
+function normalizeScheduleGenerationPayload(payload, context) {
+  const parsed = isPlainObject(payload) ? payload : safeJsonParse(safeString(payload?.text)) || {};
+  const raw = isPlainObject(parsed) ? parsed : {};
+  logAiEvent('info', 'Parsed Gemini schedule generation payload', {
+    type: safeString(raw.type || raw?.metadata?.type || 'schedule_generation'),
+    keys: Object.keys(raw || {}),
+    rawPreview: truncateForLog(raw, 12000),
+  });
+  const candidate = {
+    type: 'schedule_generation',
+    metadata: {
+      title: pickString(raw?.metadata?.title, 'Weekly schedule'),
+      weekStart: pickString(raw?.metadata?.weekStart, context.week?.start || new Date().toISOString()),
+      weekEnd: pickString(raw?.metadata?.weekEnd, context.week?.end || new Date().toISOString()),
+      timezone: pickString(raw?.metadata?.timezone, context.timezone || 'UTC'),
+      language: pickString(raw?.metadata?.language, context.language || 'en'),
+    },
+    summary: isPlainObject(raw?.summary)
+      ? pickString(raw.summary.overview, raw.summary.title, 'Weekly schedule')
+      : pickString(raw?.summary, 'Weekly schedule'),
+    events: safeArray(raw?.events || raw?.generatedSchedule || raw?.scheduleGeneration || raw?.schedule).map((item, index) => {
+      const startRaw = toIsoDate(item?.start) || toIsoDate(item?.startDateTime) || null;
+      const endRaw = toIsoDate(item?.end) || toIsoDate(item?.endDateTime) || null;
+      const weekStart = context.week?.start || new Date().toISOString();
+      const weekEnd = context.week?.end || new Date().toISOString();
+      const clampedStart = startRaw ? clampDateToRange(startRaw, weekStart, weekEnd) : null;
+      const clampedEnd = endRaw ? clampDateToRange(endRaw, weekStart, weekEnd) : null;
+      const categoryAlias = {
+        class: 'course',
+        course: 'course',
+        study: 'study_session',
+        study_session: 'study_session',
+        exam: 'exam',
+        task: 'task',
+        break: 'break',
+        personal: 'personal',
+        work: 'other',
+        appointment: 'other',
+        other: 'other',
+      };
+      const category = safeString(item?.category).toLowerCase();
+      return {
+        title: pickString(item?.title, `Schedule block ${index + 1}`),
+        description: pickString(item?.description),
+        category: ['class', 'study', 'exam', 'task', 'break', 'personal', 'work', 'appointment'].includes(category)
+          ? category
+          : 'study',
+        start: clampedStart ? clampedStart.toISOString() : pickString(item?.start, item?.startDateTime),
+        end: clampedEnd ? clampedEnd.toISOString() : pickString(item?.end, item?.endDateTime),
+        priority: ['low', 'medium', 'high'].includes(safeString(item?.priority)) ? safeString(item?.priority) : 'medium',
+        flexibility: ['fixed', 'flexible'].includes(safeString(item?.flexibility)) ? safeString(item?.flexibility) : 'flexible',
+        reason: pickString(item?.reason, 'Selected by Gemini based on the current scheduling context.'),
+        _mappedCategory: categoryAlias[category] || 'study_session',
+      };
+    }),
+    recommendations: normalizeStringArray(raw?.recommendations || raw?.suggestions || raw?.nextActions).slice(0, 10),
+    warnings: normalizeStringArray(raw?.warnings || raw?.notes).slice(0, 10),
+    conflicts: normalizeStringArray(raw?.conflicts || raw?.issues).slice(0, 10),
+  };
+
+  const parsedCandidate = scheduleGenerationOutputSchema.safeParse(candidate);
+
+  if (!parsedCandidate.success) {
+    const issues = parsedCandidate.error.issues.map((issue) => ({
+      path: issue.path.join('.'),
+      message: issue.message,
+      code: issue.code,
+    }));
+    logAiEvent('error', 'Gemini schedule generation payload validation failed', {
+      type: safeString(raw.type || raw?.metadata?.type || 'schedule_generation'),
+      issues,
+      rawKeys: Object.keys(raw || {}),
+      rawPreview: truncateForLog(raw, 12000),
+      parsedPreview: truncateForLog(candidate, 12000),
+    });
+    const message = isDevelopment()
+      ? `Gemini returned an invalid schedule generation payload: ${formatValidationIssues(issues)}`
+      : 'Gemini returned an invalid schedule generation payload.';
+    const error = new ApiError(502, message, {
+      details: {
+        issues,
+        rawKeys: Object.keys(raw || {}),
+        parsedPreview: candidate,
+      },
+    });
+    error.validationIssues = issues;
+    error.rawPayload = raw;
+    throw error;
+  }
+
+  const normalized = parsedCandidate.data;
+  const events = candidate.events
+    .map((item) => {
+      const start = toIsoDate(item.start);
+      const end = toIsoDate(item.end);
+
+      if (!start || !end) {
+        return null;
+      }
+
+      return {
+        title: item.title,
+        description: item.description,
+        category: item.category,
+        start,
+        end,
+        priority: item.priority,
+        flexibility: item.flexibility,
+        reason: item.reason,
+        mappedCategory: mapScheduleGenerationCategoryToEventType(item.category),
+        startDateTime: start,
+        endDateTime: end,
+        courseId: '',
+        taskId: '',
+        examId: '',
+      };
+    })
+    .filter(Boolean)
+    .filter((item) => new Date(item.end).getTime() > new Date(item.start).getTime());
+
+  if (!events.length) {
+    const issues = [
+      {
+        path: 'events',
+        message: 'No valid events could be normalized from the Gemini response.',
+      },
+    ];
+    logAiEvent('error', 'Gemini schedule generation payload normalized to zero valid events', {
+      rawKeys: Object.keys(raw || {}),
+      issues,
+      rawPreview: truncateForLog(raw, 12000),
+      parsedPreview: truncateForLog(normalized, 12000),
+    });
+    const error = new ApiError(502, isDevelopment()
+      ? `Gemini returned no usable schedule events after normalization. Parsed payload keys: ${Object.keys(normalized || {}).join(', ')}`
+      : 'Gemini returned no usable schedule events.', {
+      details: {
+        issues,
+        parsedPreview: normalized,
+      },
+    });
+    error.rawPayload = raw;
+    throw error;
+  }
+
+  return {
+    type: normalized.type,
+    metadata: normalized.metadata,
+    summary: normalized.summary,
+    events,
+    recommendations: normalized.recommendations,
+    warnings: normalized.warnings,
+    conflicts: normalized.conflicts,
+  };
+}
+
+function buildScheduleBuilderContext(baseContext, extra = {}) {
+  const preferredLanguage = baseContext.userPreference?.language || baseContext.studyPreferences?.language || 'English (US)';
+  const timezone = baseContext.userPreference?.timezone || 'UTC';
+  const currentDate = extra.currentDate || new Date().toISOString();
+  const weekStart = extra.weekStart || new Date(currentDate);
+  const weekEnd = extra.weekEnd || new Date(new Date(currentDate).getTime() + 6 * 86400000);
+  const recentSchedule = safeArray(extra.recentSchedule).length ? safeArray(extra.recentSchedule) : safeArray(baseContext.schedule);
+  const trimmedBaseContext = {
+    ...baseContext,
+    courses: safeArray(baseContext.courses).slice(0, 6),
+    tasks: safeArray(baseContext.tasks).slice(0, 8),
+    exams: safeArray(baseContext.exams).slice(0, 6),
+    files: safeArray(baseContext.files).slice(0, 4),
+    schedule: recentSchedule.slice(0, 12),
+  };
+
+  return toAiContextSnapshot(trimmedBaseContext, {
+    currentDate,
+    timezone,
+    language: preferredLanguage,
+    week: {
+      start: new Date(weekStart).toISOString(),
+      end: new Date(weekEnd).toISOString(),
+    },
+    eventCategories: ['course', 'td', 'tp', 'exam', 'study_session', 'task', 'break', 'personal', 'other'],
+    conversationHistory: safeArray(extra.conversationHistory).slice(0, 10),
+    recentSchedule: recentSchedule.slice(0, 20),
+    busyPeriods: safeArray(extra.busyPeriods).slice(0, 12),
+    freePeriods: safeArray(extra.freePeriods).slice(0, 12),
+    generatedSchedule: safeArray(extra.generatedSchedule),
+    conversationId: safeString(extra.conversationId),
+  });
+}
+
+function mapScheduleEventForBuilder(event) {
+  const course = typeof event?.courseId === 'object' && event.courseId?.title
+    ? {
+        id: String(event.courseId._id || event.courseId.id || ''),
+        title: event.courseId.title,
+      }
+    : null;
+
+  return {
+    id: String(event?._id || event?.id || ''),
+    title: pickString(event?.title, 'Untitled event'),
+    description: pickString(event?.description),
+    category: pickString(event?.type, 'other'),
+    startDateTime: safeString(event?.start ? new Date(event.start).toISOString() : ''),
+    endDateTime: safeString(event?.end ? new Date(event.end).toISOString() : ''),
+    location: pickString(event?.location),
+    aiSuggested: Boolean(event?.aiSuggested),
+    status: pickString(event?.status, 'scheduled'),
+    course,
+  };
+}
+
+function buildFreePeriods(busyPeriods, weekStart, weekEnd) {
+  const dayStartHour = 8;
+  const dayEndHour = 21;
+  const dayMs = 24 * 60 * 60 * 1000;
+  const periods = [];
+  const startDate = new Date(weekStart);
+
+  for (let dayIndex = 0; dayIndex < 7; dayIndex += 1) {
+    const dayBase = new Date(startDate.getTime() + dayIndex * dayMs);
+    const dayStart = new Date(dayBase);
+    dayStart.setHours(dayStartHour, 0, 0, 0);
+    const dayEnd = new Date(dayBase);
+    dayEnd.setHours(dayEndHour, 0, 0, 0);
+
+    const dayBusy = busyPeriods
+      .filter((period) => {
+        const periodStart = new Date(period.startDateTime);
+        return periodStart.toDateString() === dayStart.toDateString();
+      })
+      .sort((a, b) => new Date(a.startDateTime).getTime() - new Date(b.startDateTime).getTime());
+
+    let cursor = new Date(dayStart);
+
+    for (const period of dayBusy) {
+      const periodStart = new Date(period.startDateTime);
+      const periodEnd = new Date(period.endDateTime);
+      if (periodStart > cursor) {
+        periods.push({
+          dayIndex,
+          startDateTime: cursor.toISOString(),
+          endDateTime: periodStart.toISOString(),
+        });
+      }
+
+      if (periodEnd > cursor) {
+        cursor = new Date(periodEnd);
+      }
+    }
+
+    if (cursor < dayEnd) {
+      periods.push({
+        dayIndex,
+        startDateTime: cursor.toISOString(),
+        endDateTime: dayEnd.toISOString(),
+      });
+    }
+  }
+
+  return periods.filter((period) => new Date(period.endDateTime) > new Date(period.startDateTime));
+}
+
+function getScheduleColor(category) {
+  const map = {
+    course: '#3b82f6',
+    td: '#0ea5e9',
+    tp: '#06b6d4',
+    exam: '#8b5cf6',
+    study_session: '#10b981',
+    task: '#f97316',
+    break: '#94a3b8',
+    personal: '#ec4899',
+    other: '#64748b',
+  };
+
+  return map[safeString(category)] || map.other;
+}
+
+function mapScheduleGenerationCategoryToEventType(category) {
+  const value = safeString(category).toLowerCase();
+  const mapping = {
+    class: 'course',
+    course: 'course',
+    study: 'study_session',
+    study_session: 'study_session',
+    exam: 'exam',
+    task: 'task',
+    break: 'break',
+    personal: 'personal',
+    work: 'other',
+    appointment: 'other',
+    other: 'other',
+  };
+
+  return mapping[value] || 'study_session';
+}
+
+function toValidScheduleDate(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function buildScheduleEventCreatePayload(item, userId) {
+  const start = toValidScheduleDate(item?.startDateTime);
+  const end = toValidScheduleDate(item?.endDateTime);
+
+  if (!start || !end || end <= start) {
+    return null;
+  }
+
+  const courseId = /^[a-f\d]{24}$/i.test(safeString(item?.courseId)) ? safeString(item?.courseId) : undefined;
+  const taskId = /^[a-f\d]{24}$/i.test(safeString(item?.taskId)) ? safeString(item?.taskId) : undefined;
+  const examId = /^[a-f\d]{24}$/i.test(safeString(item?.examId)) ? safeString(item?.examId) : undefined;
+  const recurrence = isPlainObject(item?.recurrence)
+    ? {
+        enabled: Boolean(item.recurrence.enabled),
+        frequency: ['daily', 'weekly', 'monthly', 'none'].includes(safeString(item.recurrence.frequency))
+          ? safeString(item.recurrence.frequency)
+          : 'none',
+        daysOfWeek: normalizeStringArray(item.recurrence.daysOfWeek),
+        until: item.recurrence.until ? toValidScheduleDate(item.recurrence.until) || undefined : undefined,
+      }
+    : undefined;
+
+  return {
+    userId,
+    courseId,
+    taskId,
+    examId,
+    title: pickString(item?.title, 'Study block'),
+    description: pickString(item?.description),
+    type: mapScheduleGenerationCategoryToEventType(item?.mappedCategory || item?.category),
+    start,
+    end,
+    location: pickString(item?.location),
+    color: getScheduleColor(item?.mappedCategory || item?.category),
+    recurrence: recurrence && (recurrence.enabled || recurrence.frequency !== 'none' || recurrence.daysOfWeek.length || recurrence.until)
+      ? recurrence
+      : undefined,
+    aiSuggested: true,
+    status: 'scheduled',
+  };
+}
+
+async function loadScheduleBuilderConversation(req, conversationId) {
+  const query = {
+    userId: req.user._id,
+    type: { $in: SCHEDULE_BUILDER_TYPES },
+  };
+
+  if (conversationId) {
+    query.conversationId = conversationId;
+  }
+
+  const requests = await AIRequest.find(query)
+    .sort({ createdAt: 1 })
+    .limit(100)
+    .lean();
+
+  return requests;
+}
+
 async function reserveTokens(userId, cost, label) {
   const updated = await User.findOneAndUpdate(
     { _id: userId, tokenBalance: { $gte: cost } },
@@ -1219,6 +1914,7 @@ async function executeAiJob({
   fallbackFactory,
   dataMapper,
   payloadValidator = null,
+  allowFallback = true,
   courseId,
   fileId,
   taskId,
@@ -1233,7 +1929,23 @@ async function executeAiJob({
   const prompt = promptPackage.userPrompt;
   const originalUserMessage = safeString(metadata?.originalUserMessage, safeString(req.body?.message));
   const historyPrompt = safeString(metadata?.originalUserMessage, safeString(promptPackage.historyPrompt, label));
-  const retryPrompt = `${prompt}\n\nAdditional instruction: regenerate from scratch. Every required field must be filled with real, topic-specific content. Do not use placeholder text like "Question", "Exercise", or blank strings.`;
+  const retryPrompt = type === AI_TYPES.scheduleBuilderGenerate
+    ? `${prompt}\n\nAdditional instruction: regenerate from scratch as a compact weekly schedule with 4 to 16 meaningful events only. Do not generate daily routines, wake-up blocks, sleep blocks, or filler blocks. Keep descriptions short and ensure the JSON closes completely.`
+    : `${prompt}\n\nAdditional instruction: regenerate from scratch. Every required field must be filled with real, topic-specific content. Do not use placeholder text like "Question", "Exercise", or blank strings.`;
+  const timeoutMs = type === AI_TYPES.scheduleBuilderGenerate
+    ? 60000
+    : type === AI_TYPES.scheduleBuilderChat
+      ? 45000
+      : 30000;
+  const temperature = type === AI_TYPES.scheduleBuilderGenerate
+    ? 0.1
+    : type === AI_TYPES.scheduleBuilderChat
+      ? 0.15
+      : undefined;
+  const thinkingConfig = [AI_TYPES.scheduleBuilderChat, AI_TYPES.scheduleBuilderGenerate].includes(type)
+    ? { thinkingBudget: 0, includeThoughts: false }
+    : undefined;
+  const startedAt = Date.now();
 
   try {
     reservation = await reserveTokens(req.user._id, cost, label);
@@ -1255,11 +1967,101 @@ async function executeAiJob({
       conversationTitle,
     });
 
-    const rawResult = await gemini.generateJson(prompt, {
+    const baseRequestLog = {
+      userId: String(req.user._id),
+      type,
+      label,
+      requestId: String(aiRequest._id),
+      conversationId,
+      conversationTitle,
+      model: gemini.modelName,
+      cost,
+      ...getPromptStats(promptPackage, prompt),
+      contextSummary: summarizeScheduleContextForLog(context),
+    };
+
+    logAiEvent('info', `Gemini request started for ${label}`, {
+      ...baseRequestLog,
+      prompt: truncateForLog(prompt, 12000),
+      systemInstruction: truncateForLog(promptPackage.systemInstruction || getBaseSystemInstruction(), 4000),
+      responseSchema: truncateForLog(promptPackage.responseSchema, 12000),
+    });
+
+    const requestOptions = {
       systemInstruction: promptPackage.systemInstruction || getBaseSystemInstruction(),
       maxOutputTokens,
       responseSchema: promptPackage.responseSchema,
-    });
+      temperature,
+      timeoutMs,
+      thinkingConfig,
+      onRequest: (details) => logAiEvent('info', `Gemini SDK request details for ${label}`, {
+        ...baseRequestLog,
+        ...details,
+      }),
+      onResponse: (details) => logAiEvent('info', `Gemini SDK response for ${label}`, {
+        ...baseRequestLog,
+        durationMs: details.durationMs,
+        responseTextLength: details.responseTextLength,
+        modelVersion: details.modelVersion,
+        responseId: details.responseId,
+        usageMetadata: details.usageMetadata,
+        promptFeedback: details.promptFeedback,
+        rawResponseText: truncateForLog(details.rawText, 12000),
+      }),
+      onParseError: (details) => logAiEvent('error', `Gemini response was not valid JSON for ${label}`, {
+        ...baseRequestLog,
+        durationMs: details.durationMs,
+        responseTextLength: details.responseTextLength,
+        rawResponseText: truncateForLog(details.rawText, 12000),
+      }),
+      onError: (error) => {
+        const parsed = parseGeminiErrorPayload(error);
+        logAiEvent('error', `Gemini SDK error for ${label}`, {
+          ...baseRequestLog,
+          status: parsed.status,
+          code: parsed.code,
+          message: parsed.message,
+          errorName: error?.name,
+          errorStack: truncateForLog(error?.stack || '', 12000),
+        });
+      },
+    };
+
+    const generateWithRetry = async (promptValue, options, phase) => {
+      let lastError = null;
+
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        try {
+          if (attempt > 1) {
+            logAiEvent('info', `Retrying Gemini ${phase} for ${label}`, {
+              ...baseRequestLog,
+              attempt,
+              promptLength: safeString(promptValue).length,
+            });
+          }
+
+          return await gemini.generateJson(promptValue, options);
+        } catch (error) {
+          lastError = error;
+          if (attempt === 1 && isRetryableGeminiError(error)) {
+            logAiEvent('info', `Transient Gemini error detected for ${label}; retrying once.`, {
+              ...baseRequestLog,
+              phase,
+              status: getErrorStatus(error),
+              message: safeString(error?.message),
+            });
+            await new Promise((resolve) => setTimeout(resolve, 750));
+            continue;
+          }
+
+          throw error;
+        }
+      }
+
+      throw lastError;
+    };
+
+    const rawResult = await generateWithRetry(prompt, requestOptions, 'initial request');
 
     let normalized = extractGeminiObject(rawResult);
     let usable = normalized && isUsablePayload(type, normalized) ? normalized : null;
@@ -1269,12 +2071,15 @@ async function executeAiJob({
     }
 
     if (!usable) {
-      const retryResult = await gemini.generateJson(retryPrompt, {
-        systemInstruction: promptPackage.systemInstruction || getBaseSystemInstruction(),
-        maxOutputTokens,
-        responseSchema: promptPackage.responseSchema,
-        temperature: 0.1,
+      logAiEvent('info', `Gemini initial payload unusable for ${label}`, {
+        ...baseRequestLog,
+        normalizedType: typeof normalized,
+        parsedKeys: isPlainObject(normalized) ? Object.keys(normalized) : [],
       });
+      const retryResult = await generateWithRetry(retryPrompt, {
+        ...requestOptions,
+        temperature: 0.05,
+      }, 'retry request');
 
       normalized = extractGeminiObject(retryResult);
       usable = normalized && isUsablePayload(type, normalized) ? normalized : null;
@@ -1285,19 +2090,29 @@ async function executeAiJob({
     }
 
     if (!usable) {
+      if (!allowFallback) {
+        throw new ApiError(502, `Gemini returned an invalid ${label} payload.`);
+      }
+
       usable = fallbackFactory();
     }
 
     const payload = dataMapper(usable, context);
     const historyResponse = JSON.stringify(payload);
-    const assistantMessage = type === AI_TYPES.chat ? safeString(payload.reply, JSON.stringify(payload)) : undefined;
+    const assistantMessage = [AI_TYPES.chat, AI_TYPES.scheduleBuilderChat].includes(type)
+      ? safeString(payload.reply, JSON.stringify(payload))
+      : type === AI_TYPES.scheduleBuilderGenerate
+        ? safeString(payload.summary, JSON.stringify(payload))
+        : undefined;
 
     aiRequest.status = 'completed';
     aiRequest.response = historyResponse;
     aiRequest.originalUserMessage = originalUserMessage || aiRequest.originalUserMessage;
     aiRequest.assistantMessage = assistantMessage || aiRequest.assistantMessage;
-    aiRequest.suggestedActions = type === AI_TYPES.chat ? safeArray(payload.nextActions).slice(0, 5) : aiRequest.suggestedActions;
-    aiRequest.followUpQuestions = type === AI_TYPES.chat && payload.followUpQuestion ? [safeString(payload.followUpQuestion)] : aiRequest.followUpQuestions;
+    aiRequest.suggestedActions = [AI_TYPES.chat, AI_TYPES.scheduleBuilderChat].includes(type) ? safeArray(payload.nextActions).slice(0, 5) : aiRequest.suggestedActions;
+    aiRequest.followUpQuestions = [AI_TYPES.chat, AI_TYPES.scheduleBuilderChat].includes(type) && payload.followUpQuestion
+      ? [safeString(payload.followUpQuestion)]
+      : aiRequest.followUpQuestions;
     aiRequest.tokenCost = cost;
     aiRequest.conversationId = conversationId || aiRequest.conversationId;
     aiRequest.conversationTitle = conversationTitle || aiRequest.conversationTitle;
@@ -1306,7 +2121,9 @@ async function executeAiJob({
     aiRequest.metadata = {
       ...metadata,
       source: 'gemini',
-      responseType: type === AI_TYPES.chat ? payload.responseType || 'chat' : undefined,
+      responseType: [AI_TYPES.chat, AI_TYPES.scheduleBuilderChat, AI_TYPES.scheduleBuilderGenerate].includes(type)
+        ? payload.responseType || type
+        : undefined,
     };
     await aiRequest.save();
 
@@ -1316,6 +2133,7 @@ async function executeAiJob({
       userId: String(req.user._id),
       requestId: String(aiRequest._id),
       cost,
+      durationMs: Date.now() - startedAt,
     });
 
     return { aiRequest, payload };
@@ -1345,17 +2163,41 @@ async function executeAiJob({
       await refundTokens(req.user._id, reservation, label);
     }
 
+    if (error instanceof GeminiConfigurationError) {
+      logAiEvent('error', `Failed AI ${label} request`, {
+        userId: String(req.user._id),
+        requestId: aiRequest ? String(aiRequest._id) : null,
+        errorName: error?.name,
+        error: error?.message,
+        stack: truncateForLog(error?.stack || '', 12000),
+      });
+      throw buildGeminiErrorResponse(error, error.message);
+    }
+
+    if (error instanceof ApiError || Number.isFinite(error?.statusCode)) {
+      logAiEvent('error', `Failed AI ${label} request`, {
+        userId: String(req.user._id),
+        requestId: aiRequest ? String(aiRequest._id) : null,
+        errorName: error?.name,
+        status: error?.statusCode || error?.status || null,
+        error: error?.message,
+        stack: truncateForLog(error?.stack || '', 12000),
+      });
+      throw error;
+    }
+
+    const parsed = parseGeminiErrorPayload(error);
     logAiEvent('error', `Failed AI ${label} request`, {
       userId: String(req.user._id),
       requestId: aiRequest ? String(aiRequest._id) : null,
-      error: safeString(error?.message, 'Unknown error'),
+      errorName: error?.name,
+      status: parsed.status,
+      code: parsed.code,
+      error: parsed.message || safeString(error?.message, 'Unknown error'),
+      stack: truncateForLog(error?.stack || '', 12000),
     });
 
-    if (error instanceof GeminiConfigurationError) {
-      throw new ApiError(500, error.message);
-    }
-
-    throw new ApiError(503, 'Gemini AI request failed. Please try again.');
+    throw buildGeminiErrorResponse(error, parsed.message || 'Gemini AI request failed. Please try again.');
   }
 }
 
@@ -1674,6 +2516,175 @@ export const dashboardRecommendations = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { recommendations: payload, tokensUsed: TOKEN_COSTS.dashboard_recommendations, conversationId, conversationTitle: buildConversationTitle('chat', 'Dashboard recommendations') } });
 });
 
+export const scheduleBuilderChat = asyncHandler(async (req, res) => {
+  const baseContext = await loadAiBaseContext(req.user._id);
+  const conversationId = safeString(req.body.conversationId, createConversationId());
+  const bounds = resolveScheduleWeekBounds(req.body);
+  const recentMessages = safeArray(req.body.recentMessages).map((item) => ({
+    role: item.role,
+    content: safeString(item.content),
+    type: item.type || 'schedule_builder',
+  }));
+  const weekSchedule = await ScheduleEvent.find({
+    userId: req.user._id,
+    $or: [
+      { start: { $gte: bounds.start, $lte: bounds.end } },
+      { end: { $gte: bounds.start, $lte: bounds.end } },
+      { start: { $lte: bounds.start }, end: { $gte: bounds.end } },
+    ],
+  })
+    .sort({ start: 1 })
+    .populate('courseId', 'title')
+    .lean();
+
+  const busyPeriods = weekSchedule.map(mapScheduleEventForBuilder);
+
+  const context = buildScheduleBuilderContext(baseContext, {
+    currentDate: req.body.date || new Date().toISOString(),
+    weekStart: bounds.start.toISOString(),
+    weekEnd: bounds.end.toISOString(),
+    conversationId,
+    conversationHistory: recentMessages,
+    recentSchedule: busyPeriods,
+    busyPeriods,
+    freePeriods: buildFreePeriods(busyPeriods, bounds.start, bounds.end),
+  });
+
+  const promptPackage = buildScheduleBuilderChatPrompt(context);
+  const conversationTitle = buildConversationTitle('schedule_builder_chat', req.body.message || 'Schedule builder');
+  const { payload } = await executeAiJob({
+    req,
+    type: AI_TYPES.scheduleBuilderChat,
+    label: 'schedule builder chat',
+    cost: TOKEN_COSTS.schedule_builder_chat,
+    promptPackage,
+    metadata: { endpoint: '/api/ai/schedule-builder/chat', originalUserMessage: safeString(req.body.message) },
+    context,
+    fallbackFactory: () => normalizeScheduleBuilderChat({}, context),
+    dataMapper: (data) => normalizeScheduleBuilderChat(data, context),
+    payloadValidator: (data) => Boolean(safeString(data?.reply) || safeString(data?.followUpQuestion) || data?.readyToGenerate),
+    conversationId,
+    conversationTitle,
+    maxOutputTokens: 1200,
+  });
+
+  res.json({
+    success: true,
+    data: {
+      conversationId,
+      conversationTitle,
+      originalUserMessage: safeString(req.body.message),
+      assistantMessage: payload.reply,
+      reply: payload.reply,
+      followUpQuestion: payload.followUpQuestion,
+      readyToGenerate: payload.readyToGenerate,
+      conversationStage: payload.conversationStage,
+      nextActions: payload.nextActions,
+      missingInformation: payload.missingInformation,
+      summary: payload.summary,
+      confidence: payload.confidence,
+      tokensUsed: TOKEN_COSTS.schedule_builder_chat,
+      chat: payload,
+    },
+  });
+});
+
+export const generateScheduleBuilder = asyncHandler(async (req, res) => {
+  const baseContext = await loadAiBaseContext(req.user._id);
+  const conversationId = safeString(req.body.conversationId, createConversationId());
+  const bounds = resolveScheduleWeekBounds(req.body);
+  const message = safeString(req.body.message);
+  const recentMessages = safeArray(req.body.recentMessages).map((item) => ({
+    role: item.role,
+    content: safeString(item.content),
+    type: item.type || 'schedule_builder',
+  }));
+  const fallbackConversation = recentMessages.length
+    ? recentMessages
+    : mapAiConversationHistory(await loadScheduleBuilderConversation(req, conversationId));
+  const generationConversation = message
+    ? [...fallbackConversation, {
+        role: 'user',
+        content: message,
+        type: 'schedule_builder',
+      }]
+    : fallbackConversation;
+
+  const weekSchedule = await ScheduleEvent.find({
+    userId: req.user._id,
+    $or: [
+      { start: { $gte: bounds.start, $lte: bounds.end } },
+      { end: { $gte: bounds.start, $lte: bounds.end } },
+      { start: { $lte: bounds.start }, end: { $gte: bounds.end } },
+    ],
+  })
+    .sort({ start: 1 })
+    .populate('courseId', 'title')
+    .lean();
+
+  const busyPeriods = weekSchedule.map(mapScheduleEventForBuilder);
+  const freePeriods = buildFreePeriods(busyPeriods, bounds.start, bounds.end);
+  const context = buildScheduleBuilderContext(baseContext, {
+    currentDate: req.body.date || new Date().toISOString(),
+    weekStart: bounds.start.toISOString(),
+    weekEnd: bounds.end.toISOString(),
+    conversationId,
+    conversationHistory: generationConversation,
+    recentSchedule: busyPeriods,
+    busyPeriods,
+    freePeriods,
+  });
+
+  const promptPackage = buildScheduleBuilderGeneratePrompt(context);
+  const conversationTitle = buildConversationTitle('schedule_builder_generate', 'Weekly schedule');
+  const { payload } = await executeAiJob({
+    req,
+    type: AI_TYPES.scheduleBuilderGenerate,
+    label: 'schedule generation',
+    cost: TOKEN_COSTS.schedule_builder_generate,
+    promptPackage,
+    metadata: { endpoint: '/api/ai/schedule-builder/generate' },
+    context,
+    fallbackFactory: () => ({ type: 'schedule_generation', metadata: { title: 'Weekly schedule', weekStart: bounds.start.toISOString(), weekEnd: bounds.end.toISOString(), timezone: context.timezone || 'UTC', language: context.language || 'en' }, summary: 'Your schedule is ready.', events: [], recommendations: [], warnings: [], conflicts: [] }),
+    dataMapper: (data) => normalizeScheduleGenerationPayload(data, context),
+    payloadValidator: (data) => Array.isArray(data?.events) && data.events.length > 0,
+    allowFallback: false,
+    conversationId,
+    conversationTitle,
+    maxOutputTokens: 4096,
+  });
+
+  const createdEvents = [];
+  for (const item of payload.events) {
+    const eventPayload = buildScheduleEventCreatePayload(item, req.user._id);
+    if (!eventPayload) continue;
+
+    const created = await ScheduleEvent.create(eventPayload);
+    createdEvents.push(created.toObject());
+  }
+
+  if (!createdEvents.length) {
+    throw new ApiError(502, 'Generated schedule did not contain any valid events.');
+  }
+
+  res.json({
+    success: true,
+    data: {
+      conversationId,
+      conversationTitle,
+      scheduleGeneration: payload,
+      reply: payload.summary,
+      summary: payload.summary,
+      recommendations: payload.recommendations,
+      warnings: payload.warnings,
+      conflicts: payload.conflicts,
+      generatedSchedule: payload.events,
+      createdEvents,
+      tokensUsed: TOKEN_COSTS.schedule_builder_generate,
+    },
+  });
+});
+
 export const getAIHistory = asyncHandler(async (req, res) => {
   const limit = Math.max(1, Math.min(100, Number.parseInt(req.query.limit, 10) || 20));
   const conversationId = safeString(req.query.conversationId);
@@ -1695,6 +2706,30 @@ export const getAIHistory = asyncHandler(async (req, res) => {
     success: true,
     count: history.length,
     data: history,
+  });
+});
+
+export const getScheduleBuilderHistory = asyncHandler(async (req, res) => {
+  const limit = Math.max(1, Math.min(100, Number.parseInt(req.query.limit, 10) || 20));
+  const conversationId = safeString(req.query.conversationId);
+  const query = {
+    userId: req.user._id,
+    type: { $in: SCHEDULE_BUILDER_TYPES },
+  };
+
+  if (conversationId) {
+    query.conversationId = conversationId;
+  }
+
+  const history = await AIRequest.find(query)
+    .sort({ createdAt: conversationId ? 1 : -1 })
+    .limit(conversationId ? 100 : limit)
+    .lean();
+
+  res.json({
+    success: true,
+    count: history.length,
+    data: mapAiConversationHistory(history),
   });
 });
 
@@ -1732,6 +2767,49 @@ export const getAIConversations = asyncHandler(async (req, res) => {
         count: 1,
         courseId: 1,
         fileId: 1,
+      },
+    },
+    { $sort: { lastCreatedAt: -1 } },
+    { $limit: limit },
+  ]);
+
+  res.json({
+    success: true,
+    count: conversations.length,
+    data: conversations,
+  });
+});
+
+export const getScheduleBuilderConversations = asyncHandler(async (req, res) => {
+  const limit = Math.max(1, Math.min(50, Number.parseInt(req.query.limit, 10) || 20));
+
+  const conversations = await AIRequest.aggregate([
+    { $match: { userId: req.user._id, type: { $in: SCHEDULE_BUILDER_TYPES } } },
+    { $sort: { createdAt: -1 } },
+    {
+      $group: {
+        _id: { $ifNull: ['$conversationId', '$_id'] },
+        conversationId: { $first: { $ifNull: ['$conversationId', { $toString: '$_id' }] } },
+        conversationTitle: { $first: { $ifNull: ['$conversationTitle', '$prompt'] } },
+        lastMessage: { $first: { $ifNull: ['$assistantMessage', '$response'] } },
+        lastUserMessage: { $first: { $ifNull: ['$originalUserMessage', '$prompt'] } },
+        lastType: { $first: { $ifNull: ['$metadata.responseType', '$type'] } },
+        lastTokenCost: { $first: { $ifNull: ['$tokenCost', '$tokensUsed'] } },
+        lastCreatedAt: { $first: '$createdAt' },
+        count: { $sum: 1 },
+      },
+    },
+    {
+      $project: {
+        _id: 0,
+        conversationId: 1,
+        conversationTitle: 1,
+        lastMessage: 1,
+        lastUserMessage: 1,
+        lastType: 1,
+        lastTokenCost: 1,
+        lastCreatedAt: 1,
+        count: 1,
       },
     },
     { $sort: { lastCreatedAt: -1 } },

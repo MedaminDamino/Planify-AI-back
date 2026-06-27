@@ -44,6 +44,8 @@ const aiRequestSchema = new mongoose.Schema(
         'exam_prep',
         'revision_plan',
         'dashboard_recommendations',
+        'schedule_builder_chat',
+        'schedule_builder_generate',
       ],
       required: true,
     },

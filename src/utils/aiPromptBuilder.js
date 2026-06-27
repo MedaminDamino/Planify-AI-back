@@ -737,6 +737,122 @@ export function buildChatPrompt(context) {
   });
 }
 
+export function buildScheduleBuilderChatPrompt(context) {
+  return buildPromptPackage({
+    task: [
+      'You are Planify AI Schedule Builder, a dedicated assistant that helps students plan a weekly schedule naturally through conversation.',
+      'Ask one concise follow-up question only when necessary to understand the user week, commitments, priorities, deadlines, and preferences.',
+      'Do not create the schedule yet.',
+      'When you already have enough information to generate the schedule, set readyToGenerate to true and keep the reply concise.',
+      'Do not use questionnaires, templates, or hardcoded scripts.',
+      NO_PLACEHOLDER_INSTRUCTION,
+    ].join(' '),
+    context,
+    historyPrompt: 'Continue the schedule planning conversation.',
+    shape: {
+      reply: 'Short assistant reply',
+      followUpQuestion: 'A natural follow-up question if needed',
+      readyToGenerate: false,
+      conversationStage: 'gathering',
+      nextActions: [''],
+      missingInformation: [''],
+      summary: 'Short status summary',
+      confidence: 'high',
+    },
+  });
+}
+
+export function buildScheduleBuilderGeneratePrompt(context) {
+  const responseSchema = {
+    type: 'object',
+    properties: {
+      type: { type: 'string', enum: ['schedule_generation'] },
+      metadata: {
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+          weekStart: { type: 'string' },
+          weekEnd: { type: 'string' },
+          timezone: { type: 'string' },
+          language: { type: 'string' },
+        },
+        required: ['title', 'weekStart', 'weekEnd', 'timezone', 'language'],
+      },
+      summary: { type: 'string' },
+      events: {
+        type: 'array',
+        minItems: 4,
+        maxItems: 16,
+        items: {
+          type: 'object',
+          properties: {
+            title: { type: 'string' },
+            description: { type: 'string' },
+            category: { type: 'string', enum: ['class', 'study', 'exam', 'task', 'break', 'personal', 'work', 'appointment'] },
+            start: { type: 'string' },
+            end: { type: 'string' },
+            priority: { type: 'string', enum: ['low', 'medium', 'high'] },
+            flexibility: { type: 'string', enum: ['fixed', 'flexible'] },
+            reason: { type: 'string' },
+          },
+          required: ['title', 'description', 'category', 'start', 'end', 'priority', 'flexibility', 'reason'],
+        },
+      },
+      recommendations: { type: 'array', maxItems: 4, items: { type: 'string' } },
+      warnings: { type: 'array', maxItems: 4, items: { type: 'string' } },
+      conflicts: { type: 'array', maxItems: 4, items: { type: 'string' } },
+    },
+    required: ['type', 'metadata', 'summary', 'events', 'recommendations', 'warnings', 'conflicts'],
+  };
+
+  return buildPromptPackage({
+    task: [
+      'You are Planify AI Schedule Builder.',
+      'Analyze the full scheduling context and generate a complete, realistic weekly schedule.',
+      'Use the conversation history, current calendar events, courses, tasks, exams, deadlines, preferences, and the available time windows.',
+      'Generate a compact plan with 4 to 16 meaningful events only.',
+      'Prefer study sessions, fixed commitments, breaks, and a small number of personal blocks.',
+      'Do not generate a full daily routine, wake-up blocks, sleep blocks, or filler events unless the user explicitly asked for them.',
+      'Keep each description short.',
+      'Return ONLY valid JSON. No markdown. No prose. No code fences. No trailing text.',
+      'Dates must be valid ISO strings.',
+      'Every event must be inside the selected week and must satisfy start < end.',
+      'Use type exactly "schedule_generation". Do not use weekly_schedule, generatedSchedule, or any legacy field names.',
+      'Use this exact JSON contract and do not add extra top-level keys.',
+      NO_PLACEHOLDER_INSTRUCTION,
+    ].join(' '),
+    context,
+    historyPrompt: 'Generate a weekly schedule from the planning conversation.',
+    shape: {
+      type: 'schedule_generation',
+      metadata: {
+        title: 'Weekly schedule',
+        weekStart: '2026-06-22T00:00:00.000Z',
+        weekEnd: '2026-06-28T23:59:59.999Z',
+        timezone: 'Africa/Lagos',
+        language: 'en',
+      },
+      summary: 'Short weekly summary',
+      events: [
+        {
+          title: 'Study block',
+          description: 'Focus on the most important topic',
+          category: 'study',
+          start: '2026-06-22T08:00:00.000Z',
+          end: '2026-06-22T09:30:00.000Z',
+          priority: 'high',
+          flexibility: 'fixed',
+          reason: 'Why this block belongs in the schedule',
+        },
+      ],
+      recommendations: ['Recommendation'],
+      warnings: ['Warning'],
+      conflicts: ['Conflict'],
+    },
+    responseSchema,
+  });
+}
+
 export function buildDashboardRecommendationsPrompt(context) {
   return buildPromptPackage({
     task: [

@@ -4,6 +4,7 @@ import File from '../models/File.js';
 import Profile from '../models/Profile.js';
 import ScheduleEvent from '../models/ScheduleEvent.js';
 import StudyPreference from '../models/StudyPreference.js';
+import UserPreference from '../models/UserPreference.js';
 import Subscription from '../models/Subscription.js';
 import Task from '../models/Task.js';
 
@@ -114,6 +115,7 @@ export async function loadAiBaseContext(userId) {
   const [
     profile,
     studyPreferences,
+    userPreference,
     subscription,
     courses,
     tasks,
@@ -123,6 +125,7 @@ export async function loadAiBaseContext(userId) {
   ] = await Promise.all([
     Profile.findOne({ userId }).lean(),
     StudyPreference.findOne({ userId }).lean(),
+    UserPreference.findOne({ userId }).lean(),
     Subscription.findOne({ userId }).sort({ createdAt: -1 }).lean(),
     Course.find({ userId }).sort({ updatedAt: -1 }).limit(20).lean(),
     Task.find({ userId }).sort({ updatedAt: -1 }).limit(30).populate('courseId', 'title').lean(),
@@ -134,6 +137,7 @@ export async function loadAiBaseContext(userId) {
   return {
     profile: profile || null,
     studyPreferences: studyPreferences || null,
+    userPreference: userPreference || null,
     subscription: subscription || null,
     courses: mapCourses(courses),
     tasks: mapTasks(tasks),
@@ -285,8 +289,8 @@ export function toAiContextSnapshot(baseContext, extra = {}) {
             studentId: baseContext.profile.studentId || '',
           }
         : null,
-      studyPreferences: baseContext.studyPreferences
-        ? {
+    studyPreferences: baseContext.studyPreferences
+      ? {
             preferredStudyHours: baseContext.studyPreferences.preferredStudyHours || '',
             preferredDays: Array.isArray(baseContext.studyPreferences.preferredDays) ? baseContext.studyPreferences.preferredDays : [],
             focusSessionLength: baseContext.studyPreferences.focusSessionLength || 90,
@@ -301,9 +305,11 @@ export function toAiContextSnapshot(baseContext, extra = {}) {
             smartRescheduling: Boolean(baseContext.studyPreferences.smartRescheduling),
             weekendStudy: Boolean(baseContext.studyPreferences.weekendStudy),
           }
-        : null,
-      subscription: baseContext.subscription
-        ? {
+      : null,
+    language: baseContext.userPreference?.language || baseContext.studyPreferences?.language || 'English (US)',
+    timezone: baseContext.userPreference?.timezone || 'UTC',
+    subscription: baseContext.subscription
+      ? {
             plan: baseContext.subscription.plan || 'free',
             status: baseContext.subscription.status || 'trial',
             tokenLimit: Number(baseContext.subscription.tokenLimit) || 0,

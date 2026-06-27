@@ -53,6 +53,9 @@ export class GeminiService {
         ...(options.systemInstruction ? { systemInstruction: options.systemInstruction } : {}),
         ...(Number.isFinite(options.temperature) ? { temperature: options.temperature } : {}),
         ...(Number.isFinite(options.maxOutputTokens) ? { maxOutputTokens: options.maxOutputTokens } : {}),
+        ...(Number.isFinite(options.timeoutMs) ? { httpOptions: { timeout: options.timeoutMs } } : {}),
+        ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+        ...(options.thinkingConfig ? { thinkingConfig: options.thinkingConfig } : {}),
       },
     });
 
@@ -72,27 +75,58 @@ export class GeminiService {
       throw new Error("Prompt is required.");
     }
 
+    options.onRequest?.({
+      model: this.model,
+      promptLength: safePrompt.length,
+      systemInstructionLength: String(options.systemInstruction || '').length,
+      hasResponseSchema: Boolean(options.responseSchema),
+      maxOutputTokens: Number.isFinite(options.maxOutputTokens) ? options.maxOutputTokens : null,
+      timeoutMs: Number.isFinite(options.timeoutMs) ? options.timeoutMs : null,
+    });
+
+    const startedAt = Date.now();
+
     const response = await this.client.models.generateContent({
       model: this.model,
       contents: safePrompt,
       config: {
         responseMimeType: "application/json",
-        ...(options.responseSchema ? { responseSchema: options.responseSchema } : {}),
+        ...(options.responseSchema ? { responseJsonSchema: options.responseSchema } : {}),
         ...(options.systemInstruction ? { systemInstruction: options.systemInstruction } : {}),
         ...(Number.isFinite(options.temperature) ? { temperature: options.temperature } : { temperature: 0.2 }),
         ...(Number.isFinite(options.maxOutputTokens) ? { maxOutputTokens: options.maxOutputTokens } : {}),
+        ...(Number.isFinite(options.timeoutMs) ? { httpOptions: { timeout: options.timeoutMs } } : {}),
+        ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+        ...(options.thinkingConfig ? { thinkingConfig: options.thinkingConfig } : {}),
       },
     });
 
     const text = response.text || "";
+    options.onResponse?.({
+      durationMs: Date.now() - startedAt,
+      responseTextLength: text.length,
+      modelVersion: response.modelVersion || null,
+      responseId: response.responseId || null,
+      usageMetadata: response.usageMetadata || null,
+      promptFeedback: response.promptFeedback || null,
+      rawText: text,
+    });
 
     try {
       return JSON.parse(text);
     } catch {
+      options.onParseError?.({
+        durationMs: Date.now() - startedAt,
+        responseTextLength: text.length,
+        rawText: text,
+      });
       return {
         text,
       };
     }
+  } catch (error) {
+    options.onError?.(error);
+    throw error;
   }
 }
 

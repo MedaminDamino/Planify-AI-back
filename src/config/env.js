@@ -1,6 +1,10 @@
 import dotenv from "dotenv";
+import { dirname, resolve } from "path";
+import { fileURLToPath } from "url";
 
-dotenv.config();
+const moduleDir = dirname(fileURLToPath(import.meta.url));
+
+dotenv.config({ path: resolve(moduleDir, '../../.env') });
 
 export const env = {
   port: process.env.PORT || 5000,

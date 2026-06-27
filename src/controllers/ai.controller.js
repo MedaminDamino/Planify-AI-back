@@ -6,8 +6,12 @@ export {
   revisionPlan,
   chat,
   dashboardRecommendations,
+  scheduleBuilderChat,
+  generateScheduleBuilder,
   getAIHistory,
   getAIConversations,
+  getScheduleBuilderHistory,
+  getScheduleBuilderConversations,
   getTokenCosts,
 } from '../services/ai.service.js';
 

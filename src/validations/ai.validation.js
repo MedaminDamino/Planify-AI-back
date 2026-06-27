@@ -74,6 +74,34 @@ export const aiDashboardRecommendationsSchema = z.object({
   conversationId: z.string().trim().min(1).max(80).optional(),
 });
 
+const scheduleBuilderRecentMessageSchema = z.object({
+  role: z.enum(['user', 'assistant']),
+  content: z.string().trim().min(1).max(4000),
+  type: z.enum(['chat', 'schedule_builder']).optional(),
+});
+
+export const aiScheduleBuilderChatSchema = z.object({
+  message: z
+    .string({ required_error: 'Message is required' })
+    .trim()
+    .min(1, 'Message cannot be empty')
+    .max(4000, 'Message must be at most 4000 characters'),
+  conversationId: z.string().trim().min(1).max(80).optional(),
+  date: z.string().trim().min(1).max(40).optional(),
+  weekStart: z.string().trim().min(1).max(40).optional(),
+  weekEnd: z.string().trim().min(1).max(40).optional(),
+  recentMessages: z.array(scheduleBuilderRecentMessageSchema).max(20).optional(),
+});
+
+export const aiScheduleBuilderGenerateSchema = z.object({
+  conversationId: z.string().trim().min(1).max(80).optional(),
+  message: z.string().trim().min(1).max(4000).optional(),
+  date: z.string().trim().min(1).max(40).optional(),
+  weekStart: z.string().trim().min(1).max(40).optional(),
+  weekEnd: z.string().trim().min(1).max(40).optional(),
+  recentMessages: z.array(scheduleBuilderRecentMessageSchema).max(20).optional(),
+});
+
 // Backward-compatible aliases for older imports.
 export const dailyPlanSchema = aiDailyPlanSchema;
 export const summarizeSchema = aiSummarizeFileSchema;
