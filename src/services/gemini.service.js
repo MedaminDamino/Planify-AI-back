@@ -36,7 +36,7 @@ export class GeminiService {
   /**
    * Placeholder text-generation helper for future AI features.
    * @param {string} prompt
-   * @param {{ systemInstruction?: string, temperature?: number, maxOutputTokens?: number }} [options]
+   * @param {{ systemInstruction?: string, temperature?: number, maxOutputTokens?: number, responseSchema?: any }} [options]
    * @returns {Promise<string>}
    */
   async generateText(prompt, options = {}) {
@@ -77,6 +77,7 @@ export class GeminiService {
       contents: safePrompt,
       config: {
         responseMimeType: "application/json",
+        ...(options.responseSchema ? { responseSchema: options.responseSchema } : {}),
         ...(options.systemInstruction ? { systemInstruction: options.systemInstruction } : {}),
         ...(Number.isFinite(options.temperature) ? { temperature: options.temperature } : { temperature: 0.2 }),
         ...(Number.isFinite(options.maxOutputTokens) ? { maxOutputTokens: options.maxOutputTokens } : {}),

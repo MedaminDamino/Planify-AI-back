@@ -37,7 +37,8 @@ export const validate = (schema) => (req, res, next) => {
       const result = schema.safeParse(toValidate);
 
       if (!result.success) {
-        const message = result.error.errors
+        const issues = result.error?.issues || result.error?.errors || [];
+        const message = issues
           .map((e) => `${e.path.join('.')}: ${e.message}`)
           .join('; ');
         return next(new ApiError(422, message));
@@ -52,7 +53,8 @@ export const validate = (schema) => (req, res, next) => {
       const result = schema.safeParse(req.body);
 
       if (!result.success) {
-        const message = result.error.errors
+        const issues = result.error?.issues || result.error?.errors || [];
+        const message = issues
           .map((e) => `${e.path.join('.')}: ${e.message}`)
           .join('; ');
         return next(new ApiError(422, message));

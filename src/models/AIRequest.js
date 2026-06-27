@@ -23,6 +23,13 @@ const aiRequestSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Exam',
     },
+    conversationId: {
+      type: String,
+      index: true,
+    },
+    conversationTitle: {
+      type: String,
+    },
     type: {
       type: String,
       enum: [
@@ -43,6 +50,24 @@ const aiRequestSchema = new mongoose.Schema(
     prompt: {
       type: String,
       required: true,
+    },
+    originalUserMessage: {
+      type: String,
+    },
+    assistantMessage: {
+      type: String,
+    },
+    suggestedActions: {
+      type: [String],
+      default: undefined,
+    },
+    followUpQuestions: {
+      type: [String],
+      default: undefined,
+    },
+    tokenCost: {
+      type: Number,
+      default: 0,
     },
     response: String,
     status: {

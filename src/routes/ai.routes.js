@@ -6,6 +6,7 @@ import {
   dashboardRecommendations,
   generateDailyPlan,
   generateExercises,
+  getAIConversations,
   getAIHistory,
   getTokenCosts,
   prioritizeTasks,
@@ -28,6 +29,7 @@ const router = express.Router();
 router.use(protect);
 
 router.get('/history', getAIHistory);
+router.get('/conversations', getAIConversations);
 router.get('/costs', (req, res) => res.json({ success: true, data: getTokenCosts() }));
 
 router.post('/daily-plan', validate(aiDailyPlanSchema), generateDailyPlan);

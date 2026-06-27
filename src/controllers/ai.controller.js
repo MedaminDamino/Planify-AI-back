@@ -7,6 +7,7 @@ export {
   chat,
   dashboardRecommendations,
   getAIHistory,
+  getAIConversations,
   getTokenCosts,
 } from '../services/ai.service.js';
 

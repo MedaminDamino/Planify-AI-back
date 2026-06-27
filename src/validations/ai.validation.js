@@ -11,6 +11,7 @@ export const aiDailyPlanSchema = z.object({
   date: z.string().trim().optional(),
   focusHours: z.coerce.number().int().min(1).max(16).optional(),
   courseIds: z.array(objectId).max(20).optional(),
+  conversationId: z.string().trim().min(1).max(80).optional(),
 });
 
 export const aiSummarizeFileSchema = z
@@ -18,6 +19,7 @@ export const aiSummarizeFileSchema = z
     fileId: objectId.optional(),
     courseId: objectId.optional(),
     text: z.string().trim().max(10000).optional(),
+    conversationId: z.string().trim().min(1).max(80).optional(),
   })
   .refine((value) => Boolean(value.fileId || value.courseId || value.text), {
     message: 'Provide fileId, courseId, or text',
@@ -28,6 +30,7 @@ export const aiGenerateExercisesSchema = z.object({
   topic: z.string().trim().min(1).max(200).optional(),
   difficulty: z.enum(['easy', 'medium', 'hard']).optional(),
   count: z.coerce.number().int().min(1).max(20).optional(),
+  conversationId: z.string().trim().min(1).max(80).optional(),
 });
 
 export const aiPrioritizeTasksSchema = z.object({
@@ -36,12 +39,14 @@ export const aiPrioritizeTasksSchema = z.object({
   status: z.enum(['todo', 'in_progress', 'review', 'completed']).optional(),
   priority: z.enum(['low', 'medium', 'high']).optional(),
   limit: z.coerce.number().int().min(1).max(50).optional(),
+  conversationId: z.string().trim().min(1).max(80).optional(),
 });
 
 export const aiRevisionPlanSchema = z
   .object({
     courseId: objectId.optional(),
     examId: objectId.optional(),
+    conversationId: z.string().trim().min(1).max(80).optional(),
   })
   .refine((value) => Boolean(value.courseId || value.examId), {
     message: 'Provide courseId or examId',
@@ -55,15 +60,18 @@ export const aiChatSchema = z.object({
     .max(2000, 'Message must be at most 2000 characters'),
   courseId: objectId.optional(),
   fileId: objectId.optional(),
+  conversationId: z.string().trim().min(1).max(80).optional(),
+  mode: z.enum(['chat', 'exam', 'exercise', 'exercises', 'flashcard', 'flashcards', 'summary', 'daily_plan', 'revision_plan', 'prioritize_tasks']).optional(),
   recentMessages: z.array(z.object({
     role: z.enum(['user', 'assistant']),
     content: z.string().trim().min(1).max(4000),
-    type: z.enum(['chat', 'summary', 'exercises', 'daily_plan', 'prioritize_tasks', 'revision_plan']).optional(),
+    type: z.enum(['chat', 'exam', 'flashcard', 'flashcards', 'summary', 'exercise', 'exercises', 'daily_plan', 'prioritize_tasks', 'revision_plan']).optional(),
   })).max(10).optional(),
 });
 
 export const aiDashboardRecommendationsSchema = z.object({
   date: dateString.optional(),
+  conversationId: z.string().trim().min(1).max(80).optional(),
 });
 
 // Backward-compatible aliases for older imports.
